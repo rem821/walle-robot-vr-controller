@@ -3,7 +3,7 @@
 /gst-build-armeabi-v7a
 /gst-build-x86_64
 /gst-build-x86
-/src/main/java/org/freedesktop/gstreamer/androidmedia
+/src/org/*
 /src/assets/fontconfig
 /src/assets/ssl
 
