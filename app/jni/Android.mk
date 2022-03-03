@@ -4,10 +4,11 @@ include $(CLEAR_VARS)
 include $(LOCAL_PATH)/../../cflags.mk
 
 LOCAL_MODULE    := GStreamerModule
-LOCAL_SRC_FILES := gstreamer_bindings.c ControllerGUI.cpp VrInput.cpp main.cpp
-LOCAL_STATIC_LIBRARIES := sampleframework
+LOCAL_SRC_FILES := Framework_Vulkan.c VrCubeWorld_Vulkan.c
+LOCAL_STATIC_LIBRARIES := sampleframework android_native_app_glue
 LOCAL_SHARED_LIBRARIES := gstreamer_android vrapi
 LOCAL_LDLIBS := -lEGL -lGLESv3 -landroid -llog -lz
+LOCAL_LDFLAGS := -u ANativeActivity_onCreate
 
 LOCAL_C_INCLUDES := \
     $(LOCAL_PATH)/../../SampleCommon/Src \
@@ -16,7 +17,6 @@ LOCAL_C_INCLUDES := \
     $(LOCAL_PATH)/../../1stParty/OVR/Include \
     $(LOCAL_PATH)/../../1stParty/utilities/include \
     $(LOCAL_PATH)/../../3rdParty/stb/src \
-
 
 include $(BUILD_SHARED_LIBRARY)
 

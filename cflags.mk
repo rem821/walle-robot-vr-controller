@@ -4,15 +4,16 @@
 ENABLE_SANITIZER := 0
 
 LOCAL_CFLAGS	:= -DANDROID_NDK
-LOCAL_CFLAGS	+= -Werror			# error on warnings
+#LOCAL_CFLAGS	+= -Werror			# error on warnings
 LOCAL_CFLAGS	+= -Wall
 LOCAL_CFLAGS	+= -Wextra
 LOCAL_CFLAGS	+= -Wshadow
 #LOCAL_CFLAGS	+= -Wlogical-op		# not part of -Wall or -Wextra
 #LOCAL_CFLAGS	+= -Weffc++			# too many issues to fix for now
-LOCAL_CFLAGS	+= -Wno-unused-parameter
+#LOCAL_CFLAGS	+= -Wno-unused-parameter
 LOCAL_CFLAGS	+= -Wno-missing-field-initializers	# warns on this: SwipeAction	ret = {}
 LOCAL_CPPFLAGS += -std=c++17
+LOCAL_CPPFLAGS += -O0
 
 ifeq ($(OVR_DEBUG),1)
   LOCAL_CFLAGS += -DOVR_BUILD_DEBUG=1 -O0 -g
