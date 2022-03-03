@@ -35,6 +35,7 @@ public class ControlActivity extends Activity implements SurfaceHolder.Callback 
     }
 
     private GstreamerJNILib gstreamerLib = new GstreamerJNILib(this);
+    //private VrInputJNILib vrinputLib = new VrInputJNILib(this);
 
     private DatagramSocket datagramSocket;
     private Handler handler;
@@ -64,6 +65,7 @@ public class ControlActivity extends Activity implements SurfaceHolder.Callback 
         sh.addCallback(this);
 
         gstreamerLib.nativeInit();
+        //vrinputLib.nativeInit();
 
         HandlerThread mHandlerThread = new HandlerThread("HandlerThread");
         mHandlerThread.start();
@@ -204,5 +206,9 @@ public class ControlActivity extends Activity implements SurfaceHolder.Callback 
         int denominator = oldIntervalMax - oldIntervalMin;
 
         return newIntervalMin + (numerator / denominator);
+    }
+
+    public void onJoystick(boolean isLeft, int x, int y) {
+        Timber.d("On Joystick %b, %d, %d", isLeft, x, y);
     }
 }

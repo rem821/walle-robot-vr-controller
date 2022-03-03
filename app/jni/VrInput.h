@@ -13,6 +13,8 @@ Copyright   :   Copyright (c) Facebook Technologies, LLC and its affiliates. All
 #include <vector>
 #include <string>
 #include <memory>
+#include <stdexcept>
+#include <thread>
 
 #include "VrApi_Input.h"
 
@@ -28,250 +30,322 @@ Copyright   :   Copyright (c) Facebook Technologies, LLC and its affiliates. All
 #include "GUI/GuiSys.h"
 #include "Input/ArmModel.h"
 
+#include <stdint.h>
+#include <gst/gst.h>
+#include <gst/video/video.h>
+
+#include <arpa/inet.h> // htons, inet_addr
+#include <netinet/in.h> // sockaddr_in
+#include <sys/types.h> // uint16_t
+#include <sys/socket.h> // socket, sendto
+#include <unistd.h> // close
+
 namespace OVRFW {
 
-class ovrLocale;
-class ovrTextureAtlas;
-class ovrParticleSystem;
-class ovrTextureAtlas;
-class ovrBeamRenderer;
+    class ovrLocale;
 
-typedef std::vector<std::pair<ovrParticleSystem::handle_t, ovrBeamRenderer::handle_t>>
-    jointHandles_t;
+    class ovrTextureAtlas;
 
-//==============================================================
-// ovrInputDeviceBase
-// Abstract base class for generically tracking controllers of different types.
-class ovrInputDeviceBase {
-   public:
-    ovrInputDeviceBase() {}
+    class ovrParticleSystem;
 
-    virtual ~ovrInputDeviceBase() {}
+    class ovrTextureAtlas;
 
-    virtual const ovrInputCapabilityHeader* GetCaps() const = 0;
-    virtual ovrControllerType GetType() const = 0;
-    virtual ovrDeviceID GetDeviceID() const = 0;
-    virtual const char* GetName() const = 0;
-};
+    class ovrBeamRenderer;
+
+    typedef std::vector<std::pair<ovrParticleSystem::handle_t, ovrBeamRenderer::handle_t>>
+            jointHandles_t;
+
+    /* Structure to contain all our information, so we can pass it to callbacks */
+    typedef struct _GStreamerData {
+        GstElement *pipeline;         /* The running pipeline */
+        GMainContext *context;        /* GLib context used to run the main loop */
+        GstBus *bus;
+        GstMessage *msg;
+        GMainLoop *main_loop;         /* GLib main loop */
+        gboolean initialized;         /* To avoid informing the UI multiple times about the initialization */
+        GstElement *video_sink;       /* The video sink element which receives XOverlay commands */
+        ANativeWindow *native_window; /* The Android native window where video will be rendered */
+    } GStreamerData;
+
+    //==============================================================
+    // ovrInputDeviceBase
+    // Abstract base class for generically tracking controllers of different types.
+    class ovrInputDeviceBase {
+    public:
+        ovrInputDeviceBase() {}
+
+        virtual ~ovrInputDeviceBase() {}
+
+        virtual const ovrInputCapabilityHeader *GetCaps() const = 0;
+
+        virtual ovrControllerType GetType() const = 0;
+
+        virtual ovrDeviceID GetDeviceID() const = 0;
+
+        virtual const char *GetName() const = 0;
+    };
 
 //==============================================================
 // ovrInputDevice_TrackedRemote
-class ovrInputDevice_TrackedRemote : public ovrInputDeviceBase {
-   public:
-    ovrInputDevice_TrackedRemote(const ovrInputTrackedRemoteCapabilities& caps)
-        : ovrInputDeviceBase(), MinTrackpad(FLT_MAX), MaxTrackpad(-FLT_MAX), Caps(caps) {
-        IsActiveInputDevice = false;
-    }
+    class ovrInputDevice_TrackedRemote : public ovrInputDeviceBase {
+    public:
+        ovrInputDevice_TrackedRemote(const ovrInputTrackedRemoteCapabilities &caps)
+                : ovrInputDeviceBase(), MinTrackpad(FLT_MAX), MaxTrackpad(-FLT_MAX), Caps(caps) {
+            IsActiveInputDevice = false;
+        }
 
-    virtual ~ovrInputDevice_TrackedRemote() {}
+        virtual ~ovrInputDevice_TrackedRemote() {}
 
-    static ovrInputDeviceBase* Create(
-        OVRFW::ovrAppl& app,
-        OvrGuiSys& guiSys,
-        VRMenu& menu,
-        const ovrInputTrackedRemoteCapabilities& capsHeader);
-    void UpdateHaptics(ovrMobile* ovr, const ovrApplFrameIn& vrFrame);
-    virtual const ovrInputCapabilityHeader* GetCaps() const override {
-        return &Caps.Header;
-    }
-    virtual ovrControllerType GetType() const override {
-        return Caps.Header.Type;
-    }
-    virtual ovrDeviceID GetDeviceID() const override {
-        return Caps.Header.DeviceID;
-    }
-    virtual const char* GetName() const override {
-        return "TrackedRemote";
-    }
+        static ovrInputDeviceBase *Create(
+                OVRFW::ovrAppl &app,
+                OvrGuiSys &guiSys,
+                VRMenu &menu,
+                const ovrInputTrackedRemoteCapabilities &capsHeader);
 
-    ovrArmModel::ovrHandedness GetHand() const {
-        return (Caps.ControllerCapabilities & ovrControllerCaps_LeftHand) != 0
-            ? ovrArmModel::HAND_LEFT
-            : ovrArmModel::HAND_RIGHT;
-    }
+        void UpdateHaptics(ovrMobile *ovr, const ovrApplFrameIn &vrFrame);
 
-    const ovrTracking& GetTracking() const {
-        return Tracking;
-    }
-    void SetTracking(const ovrTracking& tracking) {
-        Tracking = tracking;
-    }
+        virtual const ovrInputCapabilityHeader *GetCaps() const override {
+            return &Caps.Header;
+        }
 
-    std::vector<ovrDrawSurface>& GetControllerSurfaces() {
-        return Surfaces;
-    }
-    const ovrInputTrackedRemoteCapabilities& GetTrackedRemoteCaps() const {
-        return Caps;
-    }
+        virtual ovrControllerType GetType() const override {
+            return Caps.Header.Type;
+        }
 
-    OVR::Vector2f MinTrackpad;
-    OVR::Vector2f MaxTrackpad;
-    bool IsActiveInputDevice;
+        virtual ovrDeviceID GetDeviceID() const override {
+            return Caps.Header.DeviceID;
+        }
 
-   private:
-    ovrInputTrackedRemoteCapabilities Caps;
-    std::vector<ovrDrawSurface> Surfaces;
-    ovrTracking Tracking;
-    uint32_t HapticState;
-    float HapticsSimpleValue;
-};
+        virtual const char *GetName() const override {
+            return "TrackedRemote";
+        }
 
-//==============================================================
-// ovrInputDevice_StandardPointer
-// Generic Input device for handling simple pointing and selecting interactions
-class ovrInputDevice_StandardPointer : public ovrInputDeviceBase {
-   public:
-    ovrInputDevice_StandardPointer(const ovrInputStandardPointerCapabilities& caps)
-        : ovrInputDeviceBase(), Caps(caps) {}
+        ovrArmModel::ovrHandedness GetHand() const {
+            return (Caps.ControllerCapabilities & ovrControllerCaps_LeftHand) != 0
+                   ? ovrArmModel::HAND_LEFT
+                   : ovrArmModel::HAND_RIGHT;
+        }
 
-    virtual ~ovrInputDevice_StandardPointer() {}
+        const ovrTracking &GetTracking() const {
+            return Tracking;
+        }
 
-    virtual const ovrInputCapabilityHeader* GetCaps() const override {
-        return &Caps.Header;
-    }
-    virtual ovrControllerType GetType() const override {
-        return Caps.Header.Type;
-    }
-    virtual ovrDeviceID GetDeviceID() const override {
-        return Caps.Header.DeviceID;
-    }
-    virtual const char* GetName() const override {
-        return "StandardPointer";
-    }
+        void SetTracking(const ovrTracking &tracking) {
+            Tracking = tracking;
+        }
 
-   private:
-    ovrInputStandardPointerCapabilities Caps;
-};
+        std::vector<ovrDrawSurface> &GetControllerSurfaces() {
+            return Surfaces;
+        }
 
-//==============================================================
-// ovrControllerRibbon
-class ovrControllerRibbon {
-   public:
-    ovrControllerRibbon() = delete;
-    ovrControllerRibbon(
-        const int numPoints,
-        const float width,
-        const float length,
-        const OVR::Vector4f& color);
-    ~ovrControllerRibbon();
+        const ovrInputTrackedRemoteCapabilities &GetTrackedRemoteCaps() const {
+            return Caps;
+        }
 
-    void Update(
-        const OVR::Matrix4f& centerViewMatrix,
-        const OVR::Vector3f& anchorPoint,
-        const float deltaSeconds);
+        OVR::Vector2f MinTrackpad;
+        OVR::Vector2f MaxTrackpad;
+        bool IsActiveInputDevice;
 
-    ovrRibbon* Ribbon = nullptr;
-    ovrPointList* Points = nullptr;
-    ovrPointList* Velocities = nullptr;
-    int NumPoints = 0;
-    float Length = 1.0f;
-};
+    private:
+        ovrInputTrackedRemoteCapabilities Caps;
+        std::vector<ovrDrawSurface> Surfaces;
+        ovrTracking Tracking;
+        uint32_t HapticState;
+        float HapticsSimpleValue;
+    };
 
-//==============================================================
-// ovrVrInput
-class ovrVrInput : public OVRFW::ovrAppl {
-   public:
-    ovrVrInput(
-        const int32_t mainThreadTid,
-        const int32_t renderThreadTid,
-        const int cpuLevel,
-        const int gpuLevel);
+    //==============================================================
+    // ovrInputDevice_StandardPointer
+    // Generic Input device for handling simple pointing and selecting interactions
+    class ovrInputDevice_StandardPointer : public ovrInputDeviceBase {
+    public:
+        ovrInputDevice_StandardPointer(const ovrInputStandardPointerCapabilities &caps)
+                : ovrInputDeviceBase(), Caps(caps) {}
 
-    virtual ~ovrVrInput();
+        virtual ~ovrInputDevice_StandardPointer() {}
 
-    // Called when the application initializes.
-    // Must return true if the application initializes successfully.
-    virtual bool AppInit(const OVRFW::ovrAppContext* context) override;
-    // Called when the application shuts down
-    virtual void AppShutdown(const OVRFW::ovrAppContext* context) override;
-    // Called when the application is resumed by the system.
-    virtual void AppResumed(const OVRFW::ovrAppContext* contet) override;
-    // Called when the application is paused by the system.
-    virtual void AppPaused(const OVRFW::ovrAppContext* context) override;
-    // Called once per frame when the VR session is active.
-    virtual OVRFW::ovrApplFrameOut AppFrame(const OVRFW::ovrApplFrameIn& in) override;
-    // Called once per frame to allow the application to render eye buffers.
-    virtual void AppRenderFrame(const OVRFW::ovrApplFrameIn& in, OVRFW::ovrRendererOutput& out)
+        virtual const ovrInputCapabilityHeader *GetCaps() const override {
+            return &Caps.Header;
+        }
+
+        virtual ovrControllerType GetType() const override {
+            return Caps.Header.Type;
+        }
+
+        virtual ovrDeviceID GetDeviceID() const override {
+            return Caps.Header.DeviceID;
+        }
+
+        virtual const char *GetName() const override {
+            return "StandardPointer";
+        }
+
+    private:
+        ovrInputStandardPointerCapabilities Caps;
+    };
+
+    //==============================================================
+    // ovrControllerRibbon
+    class ovrControllerRibbon {
+    public:
+        ovrControllerRibbon() = delete;
+
+        ovrControllerRibbon(
+                const int numPoints,
+                const float width,
+                const float length,
+                const OVR::Vector4f &color);
+
+        ~ovrControllerRibbon();
+
+        void Update(
+                const OVR::Matrix4f &centerViewMatrix,
+                const OVR::Vector3f &anchorPoint,
+                const float deltaSeconds);
+
+        ovrRibbon *Ribbon = nullptr;
+        ovrPointList *Points = nullptr;
+        ovrPointList *Velocities = nullptr;
+        int NumPoints = 0;
+        float Length = 1.0f;
+    };
+
+    //==============================================================
+    // GStreamerInput
+    class gstreamer_input {
+    public:
+        virtual void operator()();
+
+    private:
+        GStreamerData gstData;
+    };
+
+    //==============================================================
+    // ovrVrInput
+    class ovrVrInput : public OVRFW::ovrAppl {
+    public:
+        ovrVrInput(
+                const int32_t mainThreadTid,
+                const int32_t renderThreadTid,
+                const int cpuLevel,
+                const int gpuLevel);
+
+        virtual ~ovrVrInput();
+
+        // Called when the application initializes.
+        // Must return true if the application initializes successfully.
+        virtual bool AppInit(const OVRFW::ovrAppContext *context) override;
+
+        // Called when the application shuts down
+        virtual void AppShutdown(const OVRFW::ovrAppContext *context) override;
+
+        // Called when the application is resumed by the system.
+        virtual void AppResumed(const OVRFW::ovrAppContext *contet) override;
+
+        // Called when the application is paused by the system.
+        virtual void AppPaused(const OVRFW::ovrAppContext *context) override;
+
+        // Called once per frame when the VR session is active.
+        virtual OVRFW::ovrApplFrameOut AppFrame(const OVRFW::ovrApplFrameIn &in) override;
+
+        // Called once per frame to allow the application to render eye buffers.
+        virtual void AppRenderFrame(const OVRFW::ovrApplFrameIn &in, OVRFW::ovrRendererOutput &out)
         override;
-    // Called once per eye each frame for default renderer
-    virtual void
-    AppRenderEye(const OVRFW::ovrApplFrameIn& in, OVRFW::ovrRendererOutput& out, int eye) override;
 
-    class OvrGuiSys& GetGuiSys() {
-        return *GuiSys;
-    }
-    class ovrLocale& GetLocale() {
-        return *Locale;
-    }
+        // Called once per eye each frame for default renderer
+        virtual void
+        AppRenderEye(const OVRFW::ovrApplFrameIn &in, OVRFW::ovrRendererOutput &out,
+                     int eye) override;
 
-   private:
-    ovrRenderState RenderState;
-    ovrFileSys* FileSys;
-    OvrDebugLines* DebugLines;
-    OvrGuiSys::SoundEffectPlayer* SoundEffectPlayer;
-    OvrGuiSys* GuiSys;
-    ovrLocale* Locale;
+        class OvrGuiSys &GetGuiSys() {
+            return *GuiSys;
+        }
 
-    ModelFile* SceneModel;
-    OvrSceneView Scene;
+        class ovrLocale &GetLocale() {
+            return *Locale;
+        }
 
-    ovrTextureAtlas* SpriteAtlas;
-    ovrParticleSystem* ParticleSystem;
-    ovrTextureAtlas* BeamAtlas;
-    ovrBeamRenderer* RemoteBeamRenderer;
+    private:
+        ovrRenderState RenderState;
+        ovrFileSys *FileSys;
+        OvrDebugLines *DebugLines;
+        OvrGuiSys::SoundEffectPlayer *SoundEffectPlayer;
+        OvrGuiSys *GuiSys;
+        ovrLocale *Locale;
+        std::thread gstreamer_thread;
 
-    ovrBeamRenderer::handle_t LaserPointerBeamHandle;
-    ovrParticleSystem::handle_t LaserPointerParticleHandle;
-    bool LaserHit;
+        ModelFile *SceneModel;
+        OvrSceneView Scene;
 
-    GlProgram ProgOculusTouch;
+        ovrTextureAtlas *SpriteAtlas;
+        ovrParticleSystem *ParticleSystem;
+        ovrTextureAtlas *BeamAtlas;
+        ovrBeamRenderer *RemoteBeamRenderer;
 
-    ModelFile* ControllerModelOculusQuestTouchLeft;
-    ModelFile* ControllerModelOculusQuestTouchRight;
-    ModelFile* ControllerModelOculusQuest2TouchLeft;
-    ModelFile* ControllerModelOculusQuest2TouchRight;
+        ovrBeamRenderer::handle_t LaserPointerBeamHandle;
+        ovrParticleSystem::handle_t LaserPointerParticleHandle;
+        bool LaserHit;
 
-    OVR::Vector3f SpecularLightDirection;
-    OVR::Vector3f SpecularLightColor;
-    OVR::Vector3f AmbientLightColor;
-    OVR::Vector4f HighLightMask;
-    OVR::Vector4f HighLightMaskLeft;
-    OVR::Vector4f HighLightMaskRight;
-    OVR::Vector3f HighLightColor;
+        GlProgram ProgOculusTouch;
 
-    double LastGamepadUpdateTimeInSeconds;
+        ModelFile *ControllerModelOculusQuestTouchLeft;
+        ModelFile *ControllerModelOculusQuestTouchRight;
+        ModelFile *ControllerModelOculusQuest2TouchLeft;
+        ModelFile *ControllerModelOculusQuest2TouchRight;
 
-    VRMenu* Menu;
+        OVR::Vector3f SpecularLightDirection;
+        OVR::Vector3f SpecularLightColor;
+        OVR::Vector3f AmbientLightColor;
+        OVR::Vector4f HighLightMask;
+        OVR::Vector4f HighLightMaskLeft;
+        OVR::Vector4f HighLightMaskRight;
+        OVR::Vector3f HighLightColor;
 
-    // because a single GO controller can be a left or right controller dependent on the
-    // user's handedness (dominant hand) setting, we can't simply track controllers using a left
-    // or right hand slot look up, because on any frame a GO controller could change from
-    // left handed to right handed and switch slots.
-    std::vector<ovrInputDeviceBase*> InputDevices;
+        double LastGamepadUpdateTimeInSeconds;
 
-    ovrControllerRibbon* Ribbons[ovrArmModel::HAND_MAX];
+        VRMenu *Menu;
 
-    uint32_t ActiveInputDeviceID;
+        // because a single GO controller can be a left or right controller dependent on the
+        // user's handedness (dominant hand) setting, we can't simply track controllers using a left
+        // or right hand slot look up, because on any frame a GO controller could change from
+        // left handed to right handed and switch slots.
+        std::vector<ovrInputDeviceBase *> InputDevices;
 
-    OVRFW::ovrSurfaceRender SurfaceRender;
+        ovrControllerRibbon *Ribbons[ovrArmModel::HAND_MAX];
 
-    ovrDeviceType DeviceType;
+        uint32_t ActiveInputDeviceID;
 
-   private:
-    void ClearAndHideMenuItems();
-    ovrResult PopulateRemoteControllerInfo(ovrInputDevice_TrackedRemote& trDevice);
-    void ResetLaserPointer();
+        OVRFW::ovrSurfaceRender SurfaceRender;
 
-    int FindInputDevice(const ovrDeviceID deviceID) const;
-    void RemoveDevice(const ovrDeviceID deviceID);
-    bool IsDeviceTracked(const ovrDeviceID deviceID) const;
+        ovrDeviceType DeviceType;
 
-    void EnumerateInputDevices();
-    void RenderRunningFrame(const OVRFW::ovrApplFrameIn& in, OVRFW::ovrRendererOutput& out);
+        float leftJoystick = -1;
+        float rightJoystick = -1;
 
-    void OnDeviceConnected(const ovrInputCapabilityHeader& capsHeader);
-    void OnDeviceDisconnected(ovrDeviceID const disconnectedDeviceID);
-    bool OnKeyEvent(const int keyCode, const int action);
-};
+    private:
+        void ClearAndHideMenuItems();
+
+        ovrResult PopulateRemoteControllerInfo(ovrInputDevice_TrackedRemote &trDevice);
+
+        void ResetLaserPointer();
+
+        int FindInputDevice(const ovrDeviceID deviceID) const;
+
+        void RemoveDevice(const ovrDeviceID deviceID);
+
+        bool IsDeviceTracked(const ovrDeviceID deviceID) const;
+
+        void EnumerateInputDevices();
+
+        void RenderRunningFrame(const OVRFW::ovrApplFrameIn &in, OVRFW::ovrRendererOutput &out);
+
+        void OnDeviceConnected(const ovrInputCapabilityHeader &capsHeader);
+
+        void OnDeviceDisconnected(ovrDeviceID const disconnectedDeviceID);
+
+        bool OnKeyEvent(const int keyCode, const int action);
+
+        void sendUDPPacket();
+    };
 
 } // namespace OVRFW

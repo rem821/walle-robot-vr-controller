@@ -24,8 +24,10 @@ Copyright:	Copyright (c) Facebook Technologies, LLC and its affiliates. All righ
 //==============================================================
 // android_main
 //==============================================================
-void android_main(struct android_app* app) {
-    std::unique_ptr<OVRFW::ovrVrInput> appl =
-        std::unique_ptr<OVRFW::ovrVrInput>(new OVRFW::ovrVrInput(0, 0, 0, 0));
+void android_main(struct android_app *app) {
+    std::unique_ptr<OVRFW::ovrVrInput> appl = std::make_unique<OVRFW::ovrVrInput>(0,
+                                                                                  0,
+                                                                                  0,
+                                                                                  0);
     appl->Run(app);
 }

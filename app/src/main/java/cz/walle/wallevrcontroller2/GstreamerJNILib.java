@@ -1,11 +1,5 @@
 package cz.walle.wallevrcontroller2;
 
-import android.app.Activity;
-import android.service.controls.Control;
-import android.widget.TextView;
-
-import timber.log.Timber;
-
 public class GstreamerJNILib {
 
     ControlActivity controlActivity;
