@@ -4,7 +4,7 @@ include $(CLEAR_VARS)
 include $(LOCAL_PATH)/../../cflags.mk
 
 LOCAL_MODULE    := GStreamerModule
-LOCAL_SRC_FILES := VrCubeWorld_SurfaceView.c
+LOCAL_SRC_FILES := WalleVrController.c
 LOCAL_SHARED_LIBRARIES := gstreamer_android vrapi
 LOCAL_LDLIBS := -lEGL -lGLESv3 -landroid -llog -lz
 

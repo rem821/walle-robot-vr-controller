@@ -835,7 +835,8 @@ static bool ovrFramebuffer_Create(
 
     for (int i = 0; i < frameBuffer->TextureSwapChainLength; i++) {
         // Create the color buffer texture.
-        const GLuint colorTexture = vrapi_GetTextureSwapChainHandle(frameBuffer->ColorTextureSwapChain, i);
+        const GLuint colorTexture = vrapi_GetTextureSwapChainHandle(
+                frameBuffer->ColorTextureSwapChain, i);
         ALOGV("Color texture %d handle: %d", i, colorTexture);
 
         GLenum colorTextureTarget = frameBuffer->UseMultiview ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
@@ -1093,7 +1094,7 @@ static void ovrScene_Create(ovrScene *scene, bool useMultiview) {
 
     scene->PlanePosition.x = 0;
     scene->PlanePosition.y = 0;
-    scene->PlanePosition.z = -1.0f;
+    scene->PlanePosition.z = 1.0f;
 
     scene->CreatedScene = true;
 
@@ -1155,134 +1156,6 @@ static void ovrRenderer_Destroy(ovrRenderer *renderer) {
     for (int eye = 0; eye < renderer->NumBuffers; eye++) {
         ovrFramebuffer_Destroy(&renderer->FrameBuffer[eye]);
     }
-}
-
-static ovrLayerProjection2 ovrRenderer_RenderFrame(
-        ovrRenderer *renderer,
-        const ovrJava *java,
-        const ovrScene *scene,
-        const ovrTracking2 *tracking,
-        ovrMobile *ovr) {
-
-    // Update the instance transform attributes.
-    GL(glBindBuffer(GL_ARRAY_BUFFER, scene->InstanceTransformBuffer));
-    GL(ovrMatrix4f *planeTransform = (ovrMatrix4f *) glMapBufferRange(
-            GL_ARRAY_BUFFER,
-            0,
-            sizeof(ovrMatrix4f),
-               GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT));
-
-    // Write in order in case the mapped buffer lives on write-combined memory.
-    planeTransform[0].M[0][0] = 1;
-    planeTransform[0].M[0][1] = 0;
-    planeTransform[0].M[0][2] = 0;
-    planeTransform[0].M[0][3] = 0;
-
-    planeTransform[0].M[1][0] = 0;
-    planeTransform[0].M[1][1] = 1;
-    planeTransform[0].M[1][2] = 0;
-    planeTransform[0].M[1][3] = 0;
-
-    planeTransform[0].M[2][0] = 0;
-    planeTransform[0].M[2][1] = 0;
-    planeTransform[0].M[2][2] = 1;
-    planeTransform[0].M[2][3] = 0;
-
-    planeTransform[0].M[3][0] = scene->PlanePosition.x;
-    planeTransform[0].M[3][1] = scene->PlanePosition.y;
-    planeTransform[0].M[3][2] = scene->PlanePosition.z;
-    planeTransform[0].M[3][3] = 1.0f;
-
-    GL(glUnmapBuffer(GL_ARRAY_BUFFER));
-    GL(glBindBuffer(GL_ARRAY_BUFFER, 0));
-
-    ovrTracking2 updatedTracking = *tracking;
-
-    ovrMatrix4f eyeViewMatrixTransposed[2];
-    eyeViewMatrixTransposed[0] = ovrMatrix4f_Transpose(&updatedTracking.Eye[0].ViewMatrix);
-    eyeViewMatrixTransposed[1] = ovrMatrix4f_Transpose(&updatedTracking.Eye[1].ViewMatrix);
-
-    ovrMatrix4f projectionMatrixTransposed[2];
-    projectionMatrixTransposed[0] = ovrMatrix4f_Transpose(&updatedTracking.Eye[0].ProjectionMatrix);
-    projectionMatrixTransposed[1] = ovrMatrix4f_Transpose(&updatedTracking.Eye[1].ProjectionMatrix);
-
-    // Update the scene matrices.
-    GL(glBindBuffer(GL_UNIFORM_BUFFER, scene->SceneMatrices));
-    GL(ovrMatrix4f *sceneMatrices = (ovrMatrix4f *) glMapBufferRange(
-            GL_UNIFORM_BUFFER,
-            0,
-            2 * sizeof(ovrMatrix4f) /* 2 view matrices */ +
-            2 * sizeof(ovrMatrix4f) /* 2 projection matrices */,
-               GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT));
-
-    if (sceneMatrices != NULL) {
-        memcpy((char *) sceneMatrices, &eyeViewMatrixTransposed, 2 * sizeof(ovrMatrix4f));
-        memcpy(
-                (char *) sceneMatrices + 2 * sizeof(ovrMatrix4f),
-                &projectionMatrixTransposed,
-                2 * sizeof(ovrMatrix4f));
-    }
-
-    GL(glUnmapBuffer(GL_UNIFORM_BUFFER));
-    GL(glBindBuffer(GL_UNIFORM_BUFFER, 0));
-
-    ovrLayerProjection2 layer = vrapi_DefaultLayerProjection2();
-    layer.HeadPose = updatedTracking.HeadPose;
-    for (int eye = 0; eye < VRAPI_FRAME_LAYER_EYE_MAX; eye++) {
-        ovrFramebuffer *frameBuffer = &renderer->FrameBuffer[renderer->NumBuffers == 1 ? 0 : eye];
-        layer.Textures[eye].ColorSwapChain = frameBuffer->ColorTextureSwapChain;
-        layer.Textures[eye].SwapChainIndex = frameBuffer->TextureSwapChainIndex;
-        layer.Textures[eye].TexCoordsFromTanAngles =
-                ovrMatrix4f_TanAngleMatrixFromProjection(
-                        &updatedTracking.Eye[eye].ProjectionMatrix);
-    }
-    layer.Header.Flags |= VRAPI_FRAME_LAYER_FLAG_CHROMATIC_ABERRATION_CORRECTION;
-
-    // Render the eye images.
-    for (int eye = 0; eye < renderer->NumBuffers; eye++) {
-        // NOTE: In the non-mv case, latency can be further reduced by updating the sensor
-        // prediction for each eye (updates orientation, not position)
-        ovrFramebuffer *frameBuffer = &renderer->FrameBuffer[eye];
-        ovrFramebuffer_SetCurrent(frameBuffer);
-
-        GL(glUseProgram(scene->Program.Program));
-        GL(glBindBufferBase(
-                GL_UNIFORM_BUFFER,
-                scene->Program.UniformBinding[UNIFORM_SCENE_MATRICES],
-                scene->SceneMatrices));
-        if (scene->Program.UniformLocation[UNIFORM_VIEW_ID] >=
-            0) // NOTE: will not be present when multiview path is enabled.
-        {
-            GL(glUniform1i(scene->Program.UniformLocation[UNIFORM_VIEW_ID], eye));
-        }
-        GL(glEnable(GL_SCISSOR_TEST));
-        GL(glDepthMask(GL_TRUE));
-        GL(glEnable(GL_DEPTH_TEST));
-        GL(glDepthFunc(GL_LEQUAL));
-        GL(glEnable(GL_CULL_FACE));
-        GL(glCullFace(GL_BACK));
-        GL(glViewport(0, 0, frameBuffer->Width, frameBuffer->Height));
-        GL(glScissor(0, 0, frameBuffer->Width, frameBuffer->Height));
-        GL(glClearColor(0.225f, 0.0f, 0.225f, 1.0f));
-        GL(glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
-        GL(glBindVertexArray(scene->Cube.VertexArrayObject));
-        GL(glDrawElements(GL_TRIANGLES, scene->Cube.IndexCount, GL_UNSIGNED_SHORT, NULL))
-
-        void glDrawElements(GLenum mode,
-                            GLsizei count,
-                            GLenum type,
-                            const void *indices);
-
-        GL(glBindVertexArray(0));
-        GL(glUseProgram(0));
-
-        ovrFramebuffer_Resolve(frameBuffer);
-        ovrFramebuffer_Advance(frameBuffer);
-    }
-
-    ovrFramebuffer_SetNone();
-
-    return layer;
 }
 
 /*
@@ -2014,9 +1887,6 @@ void *AppThreadFunction(void *parm) {
     ovrApp_Clear(&appState);
     appState.Java = java;
 
-    // This app will handle android gamepad events itself.
-    vrapi_SetPropertyInt(&appState.Java, VRAPI_EAT_NATIVE_GAMEPAD_EVENTS, 0);
-
     ovrEgl_CreateContext(&appState.Egl, NULL);
 
     EglInitExtensions();
@@ -2176,15 +2046,23 @@ void *AppThreadFunction(void *parm) {
             &appState.Simulation,
             &tracking);
 #else
-        // Render eye images and setup the primary layer using ovrTracking2.
-        const ovrLayerProjection2 worldLayer = ovrRenderer_RenderFrame(
-                &appState.Renderer,
-                &appState.Java,
-                &appState.Scene,
-                &tracking,
-                appState.Ovr);
 
-        const ovrLayerHeader2 *layers[] = {&worldLayer.Header};
+        // Render eye images and setup the primary layer using ovrTracking2.
+        ovrLayerProjection2 layer = vrapi_DefaultLayerProjection2();
+        layer.HeadPose = tracking.HeadPose;
+        for (int eye = 0; eye < VRAPI_FRAME_LAYER_EYE_MAX; eye++) {
+            ovrFramebuffer* frameBuffer = &appState.Renderer.FrameBuffer[appState.Renderer.NumBuffers == 1 ? 0 : eye];
+            const int colorTextureSwapChainIndex = (int)(appState.FrameIndex % vrapi_GetTextureSwapChainLength(frameBuffer->ColorTextureSwapChain));
+            const unsigned int textureId = vrapi_GetTextureSwapChainHandle(frameBuffer->ColorTextureSwapChain, colorTextureSwapChainIndex);
+
+            // Render to 'textureId' using the 'ProjectionMatrix' from 'ovrTracking2'.
+
+            layer.Textures[eye].ColorSwapChain = frameBuffer->ColorTextureSwapChain;
+            layer.Textures[eye].SwapChainIndex = colorTextureSwapChainIndex;
+            layer.Textures[eye].TexCoordsFromTanAngles = ovrMatrix4f_TanAngleMatrixFromProjection(&tracking.Eye[eye].ProjectionMatrix);
+        }
+
+        const ovrLayerHeader2 *layers[] = {&layer.Header};
 
         ovrSubmitFrameDescription2 frameDesc = {0};
         frameDesc.Flags = 0;
