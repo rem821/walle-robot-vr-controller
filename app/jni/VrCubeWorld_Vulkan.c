@@ -53,13 +53,21 @@ static const int CPU_LEVEL = 2;
 static const int GPU_LEVEL = 3;
 static ovrSampleCount SAMPLE_COUNT = OVR_SAMPLE_COUNT_1;
 
+const uint32_t VERTICES_LENGTH = 3;
+const ovrVertex vertices[] = {
+        {{-1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}},
+        {{0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}},
+        {{-1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}},
+};
+
 typedef struct {
     char *shaderFile;
     int shaderFileLength;
 } ovrShaderFile;
 
-static void readShaderFile(AAssetManager *aassetManager, char* filename, ovrShaderFile *shaderFile) {
-    AAsset* file = AAssetManager_open(aassetManager,filename, AASSET_MODE_BUFFER);
+static void
+readShaderFile(AAssetManager *aassetManager, char *filename, ovrShaderFile *shaderFile) {
+    AAsset *file = AAssetManager_open(aassetManager, filename, AASSET_MODE_BUFFER);
     shaderFile->shaderFileLength = (int) AAsset_getLength(file);
     shaderFile->shaderFile = malloc(sizeof(char) * shaderFile->shaderFileLength);
     AAsset_read(file, shaderFile->shaderFile, shaderFile->shaderFileLength);
@@ -255,6 +263,7 @@ typedef struct {
     ovrVkRenderPass RenderPassSingleView;
     ovrVkCommandBuffer EyeCommandBuffer[VRAPI_FRAME_LAYER_EYE_MAX];
     ovrFrameBuffer Framebuffer[VRAPI_FRAME_LAYER_EYE_MAX];
+    ovrVertexBuffer VertexBuffer[VRAPI_FRAME_LAYER_EYE_MAX];
     int NumEyes;
 } ovrRenderer;
 
@@ -270,7 +279,8 @@ static void ovrScene_Clear(ovrScene *scene) {
     memset(&scene->Pipelines, 0, sizeof(ovrVkGraphicsPipeline));
 }
 
-static void ovrScene_Create(AAssetManager *aassetManager, ovrVkContext *context, ovrScene *scene, ovrRenderer *renderer) {
+static void ovrScene_Create(AAssetManager *aassetManager, ovrVkContext *context, ovrScene *scene,
+                            ovrRenderer *renderer) {
     ovrShaderFile vertexShaderFile;
     readShaderFile(aassetManager, "shaders/shader.vert.spv", &vertexShaderFile);
 
@@ -328,12 +338,12 @@ static void ovrScene_Destroy(ovrVkContext *context, ovrScene *scene) {
     scene->CreatedScene = false;
 }
 
-static void ovrScene_Render(ovrVkCommandBuffer *commandBuffer, ovrScene *scene) {
+static void ovrScene_Render(ovrVkCommandBuffer *commandBuffer, ovrVertexBuffer *vertexBuffer, ovrScene *scene) {
     ovrVkGraphicsCommand command;
     ovrVkGraphicsCommand_Init(&command);
     ovrVkGraphicsCommand_SetPipeline(&command, &scene->Pipelines);
 
-    ovrVkCommandBuffer_SubmitGraphicsCommand(commandBuffer, &command);
+    ovrVkCommandBuffer_SubmitGraphicsCommand(commandBuffer, vertexBuffer, &command, VERTICES_LENGTH);
 }
 
 /*
@@ -393,6 +403,7 @@ static void ovrRenderer_Create(ovrRenderer *renderer, ovrVkContext *context, con
                 vrapi_GetSystemPropertyInt(java, VRAPI_SYS_PROP_SUGGESTED_EYE_TEXTURE_HEIGHT));
         ovrColorSwapChain_Destroy(&colorSwapChains[eye]);
 
+        ovrVertexBuffer_Create(context, vertices, VERTICES_LENGTH, &renderer->VertexBuffer[eye]);
         ovrVkCommandBuffer_Create(
                 context,
                 &renderer->EyeCommandBuffer[eye],
@@ -434,7 +445,7 @@ static ovrLayerProjection2 ovrRenderer_RenderFrame(
                 &renderer->Framebuffer[eye].Framebuffer,
                 &screenRect);
 
-        ovrScene_Render(&renderer->EyeCommandBuffer[eye], scene);
+        ovrScene_Render(&renderer->EyeCommandBuffer[eye], &renderer->VertexBuffer[eye], scene);
 
         ovrVkCommandBuffer_EndRenderPass(
                 &renderer->EyeCommandBuffer[eye], &renderer->RenderPassSingleView);

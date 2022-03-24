@@ -636,8 +636,6 @@ void ovrGpuDevice_CreateShader(
     moduleCreateInfo.codeSize = codeSize;
     moduleCreateInfo.pCode = code;
 
-    ALOGV("ICD_SPV_MAGIC: %u", *(uint32_t *) code);
-
     if (*(uint32_t *) code == ICD_SPV_MAGIC) {
         moduleCreateInfo.codeSize = codeSize;
         moduleCreateInfo.pCode = (uint32_t *) code;
@@ -945,6 +943,97 @@ void ovrVkGraphicsProgram_Destroy(ovrVkContext *context, ovrVkGraphicsProgram *p
 /*
 ================================================================================================================================
 
+ovrVertex
+
+================================================================================================================================
+*/
+
+VkVertexInputAttributeDescription *getVertexInputAttributeDescriptions() {
+    VkVertexInputAttributeDescription *descriptions = malloc(
+            sizeof(VkVertexInputAttributeDescription) * 2);
+
+    descriptions[0].binding = 0;
+    descriptions[0].location = 0;
+    descriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+    descriptions[0].offset = offsetof(ovrVertex, pos);
+
+    descriptions[1].binding = 0;
+    descriptions[1].location = 1;
+    descriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    descriptions[1].offset = offsetof(ovrVertex, color);
+
+    return descriptions;
+}
+
+VkVertexInputBindingDescription *getVertexInputBindingDescription() {
+    VkVertexInputBindingDescription *bindingDescription = malloc(
+            sizeof(VkVertexInputBindingDescription));
+
+    bindingDescription[0].binding = 0;
+    bindingDescription[0].stride = sizeof(ovrVertex);
+    bindingDescription[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    return bindingDescription;
+}
+
+void ovrVertexBuffer_Create(ovrVkContext *context, const ovrVertex *vertices, uint32_t verticesLength, ovrVertexBuffer *vertexBuffer) {
+    VkBufferCreateInfo bufferInfo;
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.pNext = NULL;
+    bufferInfo.flags = 0;
+    bufferInfo.size = sizeof(ovrVertex) * verticesLength;
+    bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    bufferInfo.queueFamilyIndexCount = 0;
+    bufferInfo.pQueueFamilyIndices = NULL;
+
+    VK(context->device->vkCreateBuffer(context->device->device, &bufferInfo, VK_ALLOCATOR,
+                                       &vertexBuffer->vertexBuffer));
+
+    VkMemoryRequirements memRequirements;
+    VC(context->device->vkGetBufferMemoryRequirements(context->device->device,
+                                                      vertexBuffer->vertexBuffer,
+                                                      &memRequirements));
+
+    uint32_t memoryType = findMemoryType(context->device,
+                                         memRequirements.memoryTypeBits,
+                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    VkMemoryAllocateInfo allocInfo;
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.pNext = NULL;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = memoryType;
+
+    VK(context->device->vkAllocateMemory(context->device->device, &allocInfo, VK_ALLOCATOR,
+                                         &vertexBuffer->vertexBufferMemory))
+    VK(context->device->vkBindBufferMemory(context->device->device, vertexBuffer->vertexBuffer, vertexBuffer->vertexBufferMemory, 0));
+
+    void *data;
+    VK(context->device->vkMapMemory(context->device->device, vertexBuffer->vertexBufferMemory, 0,
+                                    bufferInfo.size, 0, &data));
+    memcpy(data, vertices, (size_t) bufferInfo.size);
+    VC(context->device->vkUnmapMemory(context->device->device, vertexBuffer->vertexBufferMemory));
+}
+
+uint32_t findMemoryType(ovrVkDevice *device, uint32_t typeFilter,
+                        VkMemoryPropertyFlags properties) {
+
+
+    for (uint32_t i = 0; i < device->physicalDeviceMemoryProperties.memoryTypeCount; i++) {
+        if ((typeFilter & (1 << i)) &&
+            (device->physicalDeviceMemoryProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+/*
+================================================================================================================================
+
 Vulkan graphics pipeline.
 
 A graphics pipeline encapsulates the geometry, program and ROP state that is used to render.
@@ -985,16 +1074,19 @@ bool ovrVkGraphicsPipeline_Create(
         const ovrVkGraphicsPipelineParms *parms,
         ovrScreenRect screenRect) {
 
+    VkVertexInputBindingDescription *bindingDescription = getVertexInputBindingDescription();
+    VkVertexInputAttributeDescription *attributeDescriptions = getVertexInputAttributeDescriptions();
+
     pipeline->rop = parms->rop;
     pipeline->program = parms->program;
 
     pipeline->vertexInputState.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     pipeline->vertexInputState.pNext = NULL;
     pipeline->vertexInputState.flags = 0;
-    pipeline->vertexInputState.vertexBindingDescriptionCount = 0;
-    pipeline->vertexInputState.pVertexBindingDescriptions = NULL;
-    pipeline->vertexInputState.vertexAttributeDescriptionCount = 0;
-    pipeline->vertexInputState.pVertexAttributeDescriptions = NULL;
+    pipeline->vertexInputState.vertexBindingDescriptionCount = 1;
+    pipeline->vertexInputState.pVertexBindingDescriptions = bindingDescription;
+    pipeline->vertexInputState.vertexAttributeDescriptionCount = 2;
+    pipeline->vertexInputState.pVertexAttributeDescriptions = attributeDescriptions;
 
     pipeline->inputAssemblyState.sType =
             VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -1391,7 +1483,9 @@ void ovrVkCommandBuffer_EndRenderPass(
 
 void ovrVkCommandBuffer_SubmitGraphicsCommand(
         ovrVkCommandBuffer *commandBuffer,
-        const ovrVkGraphicsCommand *command) {
+        const ovrVertexBuffer *vertexBuffer,
+        const ovrVkGraphicsCommand *command,
+        uint32_t verticesLength) {
     assert(commandBuffer->currentRenderPass != NULL);
 
     ovrVkDevice *device = commandBuffer->context->device;
@@ -1405,7 +1499,11 @@ void ovrVkCommandBuffer_SubmitGraphicsCommand(
                 cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, command->pipeline->pipeline));
     }
 
-    VC(device->vkCmdDraw(cmdBuffer, 3, 1, 0, 0));
+    VkBuffer vertexBuffers[] = {vertexBuffer->vertexBuffer};
+    VkDeviceSize offsets[] = {0};
+    VC(device->vkCmdBindVertexBuffers(cmdBuffer, 0, 1, vertexBuffers, offsets));
+
+    VC(device->vkCmdDraw(cmdBuffer, verticesLength, 1, 0, 0));
 
     commandBuffer->currentGraphicsState = *command;
 }

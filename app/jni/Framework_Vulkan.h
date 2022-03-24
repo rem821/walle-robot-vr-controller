@@ -86,6 +86,27 @@ typedef struct {
 /*
 ================================================================================================================================
 
+ovrVertex
+
+================================================================================================================================
+*/
+typedef struct {
+    ovrVector2f pos;
+    ovrVector3f color;
+} ovrVertex;
+
+typedef struct {
+    VkBuffer vertexBuffer;
+    VkDeviceMemory vertexBufferMemory;
+} ovrVertexBuffer;
+
+VkVertexInputBindingDescription *getVertexInputBindingDescription();
+
+VkVertexInputAttributeDescription *getVertexInputAttributeDescriptions();
+
+/*
+================================================================================================================================
+
 Vulkan error checking.
 
 ================================================================================================================================
@@ -423,7 +444,7 @@ For optimal performance a framebuffer should only be created at load time, not a
 */
 
 typedef struct {
-    VkImageView  *colorImageViews;
+    VkImageView *colorImageViews;
     VkFramebuffer *framebuffers;
     ovrVkRenderPass *renderPass;
     int width;
@@ -700,4 +721,19 @@ void ovrVkCommandBuffer_EndRenderPass(
 
 void ovrVkCommandBuffer_SubmitGraphicsCommand(
         ovrVkCommandBuffer *commandBuffer,
-        const ovrVkGraphicsCommand *command);
+        const ovrVertexBuffer *vertexBuffer,
+        const ovrVkGraphicsCommand *command,
+        uint32_t verticesLength);
+
+/*
+================================================================================================================================
+
+Vulkan vertex buffer.
+
+================================================================================================================================
+*/
+
+void ovrVertexBuffer_Create(ovrVkContext *context, const ovrVertex *vertices, uint32_t verticesLength, ovrVertexBuffer *vertexBuffer);
+
+uint32_t findMemoryType(ovrVkDevice *device, uint32_t typeFilter,
+                        VkMemoryPropertyFlags properties);
