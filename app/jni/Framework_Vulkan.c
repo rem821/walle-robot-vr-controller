@@ -598,6 +598,7 @@ bool ovrVkDevice_Create(ovrVkDevice *device, ovrVkInstance *instance) {
     GET_DEVICE_PROC_ADDR(vkCmdBindVertexBuffers);
 
     GET_DEVICE_PROC_ADDR(vkCmdDraw);
+    GET_DEVICE_PROC_ADDR(vkCmdDrawIndexed);
 
     GET_DEVICE_PROC_ADDR(vkCmdCopyBuffer);
     GET_DEVICE_PROC_ADDR(vkCmdResolveImage);
@@ -999,9 +1000,9 @@ ovrBuffer_Create(ovrVkContext *context, VkBufferUsageFlags usage, VkMemoryProper
                                                       &memRequirements));
 
     int32_t memoryType = findMemoryType(context->device,
-                                         memRequirements.memoryTypeBits,
-                                         properties);
-    if(memoryType < 0) {
+                                        memRequirements.memoryTypeBits,
+                                        properties);
+    if (memoryType < 0) {
         ALOGE("Couldn't find proper memory type!");
     }
 
@@ -1035,7 +1036,37 @@ ovrBuffer_Vertex_Create(ovrVkContext *context, const ovrVertex *vertices, uint32
     VC(context->device->vkUnmapMemory(context->device->device, stagingBuffer->bufferMemory));
 
     ovrBuffer_Create(context, VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                              VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                     size, buffer);
+
+    copyBuffer(context, *stagingBuffer, *buffer, size);
+
+    VC(context->device->vkDestroyBuffer(context->device->device, stagingBuffer->buffer,
+                                        VK_ALLOCATOR));
+    VC(context->device->vkFreeMemory(context->device->device, stagingBuffer->bufferMemory,
+                                     VK_ALLOCATOR));
+}
+
+void
+ovrBuffer_Index_Create(ovrVkContext *context, const ovrVertex *indices, uint32_t indicesLength,
+                        ovrBuffer *buffer) {
+    VkDeviceSize size = sizeof(uint16_t) * indicesLength;
+    ovrBuffer *stagingBuffer = malloc(sizeof(ovrBuffer));
+
+    ovrBuffer_Create(context, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                     size, stagingBuffer);
+
+    void *data;
+    VK(context->device->vkMapMemory(context->device->device, stagingBuffer->bufferMemory, 0,
+                                    size, 0, &data));
+    memcpy(data, indices, (size_t) size);
+    VC(context->device->vkUnmapMemory(context->device->device, stagingBuffer->bufferMemory));
+
+    ovrBuffer_Create(context, VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                             VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                      size, buffer);
 
     copyBuffer(context, *stagingBuffer, *buffer, size);
@@ -1093,7 +1124,7 @@ copyBuffer(ovrVkContext *context, ovrBuffer srcBuffer, ovrBuffer dstBuffer, VkDe
 }
 
 int32_t findMemoryType(ovrVkDevice *device, uint32_t typeFilter,
-                        VkMemoryPropertyFlags properties) {
+                       VkMemoryPropertyFlags properties) {
 
 
     for (uint32_t i = 0; i < device->physicalDeviceMemoryProperties.memoryTypeCount; i++) {
@@ -1560,8 +1591,10 @@ void ovrVkCommandBuffer_EndRenderPass(
 void ovrVkCommandBuffer_SubmitGraphicsCommand(
         ovrVkCommandBuffer *commandBuffer,
         const ovrBuffer *vertexBuffer,
+        const ovrBuffer *indexBuffer,
         const ovrVkGraphicsCommand *command,
-        uint32_t verticesLength) {
+        uint32_t verticesLength,
+        uint32_t indicesLength) {
     assert(commandBuffer->currentRenderPass != NULL);
 
     ovrVkDevice *device = commandBuffer->context->device;
@@ -1577,9 +1610,11 @@ void ovrVkCommandBuffer_SubmitGraphicsCommand(
 
     VkBuffer vertexBuffers[] = {vertexBuffer->buffer};
     VkDeviceSize offsets[] = {0};
-    VC(device->vkCmdBindVertexBuffers(cmdBuffer, 0, 1, vertexBuffers, offsets));
 
-    VC(device->vkCmdDraw(cmdBuffer, verticesLength, 1, 0, 0));
+    VC(device->vkCmdBindVertexBuffers(cmdBuffer, 0, 1, vertexBuffers, offsets));
+    VC(device->vkCmdBindIndexBuffer(cmdBuffer, indexBuffer->buffer, 0, VK_INDEX_TYPE_UINT16));
+
+    VC(device->vkCmdDrawIndexed(cmdBuffer, indicesLength, 1, 0, 0, 0));
 
     commandBuffer->currentGraphicsState = *command;
 }

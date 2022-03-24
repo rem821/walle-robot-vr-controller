@@ -53,11 +53,17 @@ static const int CPU_LEVEL = 2;
 static const int GPU_LEVEL = 3;
 static ovrSampleCount SAMPLE_COUNT = OVR_SAMPLE_COUNT_1;
 
-const uint32_t VERTICES_LENGTH = 3;
+const uint32_t VERTICES_LENGTH = 4;
 const ovrVertex vertices[] = {
-        {{-1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}},
-        {{0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}},
-        {{-1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}},
+        {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+        {{0.5f,  -0.5f}, {0.0f, 1.0f, 0.0f}},
+        {{0.5f,  0.5f},  {0.0f, 0.0f, 1.0f}},
+        {{-0.5f, 0.5f},  {1.0f, 1.0f, 1.0f}}
+};
+
+const uint32_t INDICES_LENGTH = 6;
+const uint16_t indices[] = {
+        0, 1, 2, 2, 3, 0
 };
 
 typedef struct {
@@ -264,6 +270,7 @@ typedef struct {
     ovrVkCommandBuffer EyeCommandBuffer[VRAPI_FRAME_LAYER_EYE_MAX];
     ovrFrameBuffer Framebuffer[VRAPI_FRAME_LAYER_EYE_MAX];
     ovrBuffer VertexBuffer[VRAPI_FRAME_LAYER_EYE_MAX];
+    ovrBuffer IndexBuffer[VRAPI_FRAME_LAYER_EYE_MAX];
     int NumEyes;
 } ovrRenderer;
 
@@ -338,12 +345,14 @@ static void ovrScene_Destroy(ovrVkContext *context, ovrScene *scene) {
     scene->CreatedScene = false;
 }
 
-static void ovrScene_Render(ovrVkCommandBuffer *commandBuffer, ovrBuffer *vertexBuffer, ovrScene *scene) {
+static void
+ovrScene_Render(ovrVkCommandBuffer *commandBuffer, ovrBuffer *vertexBuffer, ovrBuffer *indexBuffer, ovrScene *scene) {
     ovrVkGraphicsCommand command;
     ovrVkGraphicsCommand_Init(&command);
     ovrVkGraphicsCommand_SetPipeline(&command, &scene->Pipelines);
 
-    ovrVkCommandBuffer_SubmitGraphicsCommand(commandBuffer, vertexBuffer, &command, VERTICES_LENGTH);
+    ovrVkCommandBuffer_SubmitGraphicsCommand(commandBuffer, vertexBuffer, indexBuffer, &command,
+                                             VERTICES_LENGTH, INDICES_LENGTH);
 }
 
 /*
@@ -404,6 +413,7 @@ static void ovrRenderer_Create(ovrRenderer *renderer, ovrVkContext *context, con
         ovrColorSwapChain_Destroy(&colorSwapChains[eye]);
 
         ovrBuffer_Vertex_Create(context, vertices, VERTICES_LENGTH, &renderer->VertexBuffer[eye]);
+        ovrBuffer_Index_Create(context, indices, INDICES_LENGTH, &renderer->IndexBuffer[eye]);
         ovrVkCommandBuffer_Create(
                 context,
                 &renderer->EyeCommandBuffer[eye],
@@ -445,7 +455,7 @@ static ovrLayerProjection2 ovrRenderer_RenderFrame(
                 &renderer->Framebuffer[eye].Framebuffer,
                 &screenRect);
 
-        ovrScene_Render(&renderer->EyeCommandBuffer[eye], &renderer->VertexBuffer[eye], scene);
+        ovrScene_Render(&renderer->EyeCommandBuffer[eye], &renderer->VertexBuffer[eye], &renderer->IndexBuffer[eye], scene);
 
         ovrVkCommandBuffer_EndRenderPass(
                 &renderer->EyeCommandBuffer[eye], &renderer->RenderPassSingleView);

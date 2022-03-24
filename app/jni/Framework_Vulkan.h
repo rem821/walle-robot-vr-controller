@@ -319,6 +319,7 @@ typedef struct {
     PFN_vkCmdBindIndexBuffer vkCmdBindIndexBuffer;
     PFN_vkCmdBindVertexBuffers vkCmdBindVertexBuffers;
     PFN_vkCmdDraw vkCmdDraw;
+    PFN_vkCmdDrawIndexed vkCmdDrawIndexed;
     PFN_vkCmdCopyBuffer vkCmdCopyBuffer;
     PFN_vkCmdResolveImage vkCmdResolveImage;
     PFN_vkCmdPipelineBarrier vkCmdPipelineBarrier;
@@ -722,8 +723,10 @@ void ovrVkCommandBuffer_EndRenderPass(
 void ovrVkCommandBuffer_SubmitGraphicsCommand(
         ovrVkCommandBuffer *commandBuffer,
         const ovrBuffer *vertexBuffer,
+        const ovrBuffer *indexBuffer,
         const ovrVkGraphicsCommand *command,
-        uint32_t verticesLength);
+        uint32_t verticesLength,
+        uint32_t indicesLength);
 
 /*
 ================================================================================================================================
@@ -736,6 +739,8 @@ Vulkan buffer.
 void ovrBuffer_Create(ovrVkContext *context, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkDeviceSize size, ovrBuffer *buffer);
 
 void ovrBuffer_Vertex_Create(ovrVkContext *context, const ovrVertex *vertices, uint32_t verticesLength, ovrBuffer *buffer);
+
+void ovrBuffer_Index_Create(ovrVkContext *context, const ovrVertex *indices, uint32_t indicesLength, ovrBuffer *buffer);
 
 void copyBuffer(ovrVkContext *context, ovrBuffer srcBuffer, ovrBuffer dstBuffer, VkDeviceSize size);
 
