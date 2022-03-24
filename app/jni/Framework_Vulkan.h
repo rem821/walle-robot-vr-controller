@@ -737,6 +737,7 @@ void ovrBuffer_Create(ovrVkContext *context, VkBufferUsageFlags usage, VkMemoryP
 
 void ovrBuffer_Vertex_Create(ovrVkContext *context, const ovrVertex *vertices, uint32_t verticesLength, ovrBuffer *buffer);
 
+void copyBuffer(ovrVkContext *context, ovrBuffer srcBuffer, ovrBuffer dstBuffer, VkDeviceSize size);
 
-uint32_t findMemoryType(ovrVkDevice *device, uint32_t typeFilter,
+int32_t findMemoryType(ovrVkDevice *device, uint32_t typeFilter,
                         VkMemoryPropertyFlags properties);

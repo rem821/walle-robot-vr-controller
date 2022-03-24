@@ -998,9 +998,12 @@ ovrBuffer_Create(ovrVkContext *context, VkBufferUsageFlags usage, VkMemoryProper
                                                       buffer->buffer,
                                                       &memRequirements));
 
-    uint32_t memoryType = findMemoryType(context->device,
+    int32_t memoryType = findMemoryType(context->device,
                                          memRequirements.memoryTypeBits,
                                          properties);
+    if(memoryType < 0) {
+        ALOGE("Couldn't find proper memory type!");
+    }
 
     VkMemoryAllocateInfo allocInfo;
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
@@ -1017,20 +1020,79 @@ ovrBuffer_Create(ovrVkContext *context, VkBufferUsageFlags usage, VkMemoryProper
 void
 ovrBuffer_Vertex_Create(ovrVkContext *context, const ovrVertex *vertices, uint32_t verticesLength,
                         ovrBuffer *buffer) {
+
     VkDeviceSize size = sizeof(ovrVertex) * verticesLength;
-    ovrBuffer_Create(context, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+    ovrBuffer *stagingBuffer = malloc(sizeof(ovrBuffer));
+
+    ovrBuffer_Create(context, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                     size, buffer);
+                     size, stagingBuffer);
 
     void *data;
-    VK(context->device->vkMapMemory(context->device->device, buffer->bufferMemory, 0,
+    VK(context->device->vkMapMemory(context->device->device, stagingBuffer->bufferMemory, 0,
                                     size, 0, &data));
     memcpy(data, vertices, (size_t) size);
-    VC(context->device->vkUnmapMemory(context->device->device, buffer->bufferMemory));
+    VC(context->device->vkUnmapMemory(context->device->device, stagingBuffer->bufferMemory));
+
+    ovrBuffer_Create(context, VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                     size, buffer);
+
+    copyBuffer(context, *stagingBuffer, *buffer, size);
+
+    VC(context->device->vkDestroyBuffer(context->device->device, stagingBuffer->buffer,
+                                        VK_ALLOCATOR));
+    VC(context->device->vkFreeMemory(context->device->device, stagingBuffer->bufferMemory,
+                                     VK_ALLOCATOR));
 }
 
+void
+copyBuffer(ovrVkContext *context, ovrBuffer srcBuffer, ovrBuffer dstBuffer, VkDeviceSize size) {
+    VkCommandBufferAllocateInfo allocInfo;
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.pNext = NULL;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandPool = context->commandPool;
+    allocInfo.commandBufferCount = 1;
 
-uint32_t findMemoryType(ovrVkDevice *device, uint32_t typeFilter,
+    VkCommandBuffer commandBuffer;
+    VK(context->device->vkAllocateCommandBuffers(context->device->device, &allocInfo,
+                                                 &commandBuffer));
+
+    VkCommandBufferBeginInfo beginInfo;
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    beginInfo.pNext = NULL;
+    beginInfo.pInheritanceInfo = NULL;
+    VK(context->device->vkBeginCommandBuffer(commandBuffer, &beginInfo));
+
+    VkBufferCopy copyRegion;
+    copyRegion.srcOffset = 0;
+    copyRegion.dstOffset = 0;
+    copyRegion.size = size;
+    VC(context->device->vkCmdCopyBuffer(commandBuffer, srcBuffer.buffer, dstBuffer.buffer, 1,
+                                        &copyRegion));
+    VK(context->device->vkEndCommandBuffer(commandBuffer));
+
+    VkSubmitInfo submitInfo;
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.pNext = NULL;
+    submitInfo.waitSemaphoreCount = 0;
+    submitInfo.pWaitSemaphores = NULL;
+    submitInfo.pWaitDstStageMask = NULL;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+    submitInfo.signalSemaphoreCount = 0;
+    submitInfo.pSignalSemaphores = NULL;
+
+    VK(context->device->vkQueueSubmit(context->queue, 1, &submitInfo, VK_NULL_HANDLE));
+    VK(context->device->vkQueueWaitIdle(context->queue));
+
+    VC(context->device->vkFreeCommandBuffers(context->device->device, context->commandPool, 1,
+                                             &commandBuffer));
+}
+
+int32_t findMemoryType(ovrVkDevice *device, uint32_t typeFilter,
                         VkMemoryPropertyFlags properties) {
 
 
