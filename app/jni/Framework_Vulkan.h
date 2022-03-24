@@ -96,9 +96,9 @@ typedef struct {
 } ovrVertex;
 
 typedef struct {
-    VkBuffer vertexBuffer;
-    VkDeviceMemory vertexBufferMemory;
-} ovrVertexBuffer;
+    VkBuffer buffer;
+    VkDeviceMemory bufferMemory;
+} ovrBuffer;
 
 VkVertexInputBindingDescription *getVertexInputBindingDescription();
 
@@ -721,19 +721,22 @@ void ovrVkCommandBuffer_EndRenderPass(
 
 void ovrVkCommandBuffer_SubmitGraphicsCommand(
         ovrVkCommandBuffer *commandBuffer,
-        const ovrVertexBuffer *vertexBuffer,
+        const ovrBuffer *vertexBuffer,
         const ovrVkGraphicsCommand *command,
         uint32_t verticesLength);
 
 /*
 ================================================================================================================================
 
-Vulkan vertex buffer.
+Vulkan buffer.
 
 ================================================================================================================================
 */
 
-void ovrVertexBuffer_Create(ovrVkContext *context, const ovrVertex *vertices, uint32_t verticesLength, ovrVertexBuffer *vertexBuffer);
+void ovrBuffer_Create(ovrVkContext *context, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkDeviceSize size, ovrBuffer *buffer);
+
+void ovrBuffer_Vertex_Create(ovrVkContext *context, const ovrVertex *vertices, uint32_t verticesLength, ovrBuffer *buffer);
+
 
 uint32_t findMemoryType(ovrVkDevice *device, uint32_t typeFilter,
                         VkMemoryPropertyFlags properties);

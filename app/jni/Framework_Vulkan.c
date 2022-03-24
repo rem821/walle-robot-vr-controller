@@ -976,29 +976,31 @@ VkVertexInputBindingDescription *getVertexInputBindingDescription() {
     return bindingDescription;
 }
 
-void ovrVertexBuffer_Create(ovrVkContext *context, const ovrVertex *vertices, uint32_t verticesLength, ovrVertexBuffer *vertexBuffer) {
+void
+ovrBuffer_Create(ovrVkContext *context, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
+                 VkDeviceSize size,
+                 ovrBuffer *buffer) {
     VkBufferCreateInfo bufferInfo;
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.pNext = NULL;
     bufferInfo.flags = 0;
-    bufferInfo.size = sizeof(ovrVertex) * verticesLength;
-    bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     bufferInfo.queueFamilyIndexCount = 0;
     bufferInfo.pQueueFamilyIndices = NULL;
 
     VK(context->device->vkCreateBuffer(context->device->device, &bufferInfo, VK_ALLOCATOR,
-                                       &vertexBuffer->vertexBuffer));
+                                       &buffer->buffer));
 
     VkMemoryRequirements memRequirements;
     VC(context->device->vkGetBufferMemoryRequirements(context->device->device,
-                                                      vertexBuffer->vertexBuffer,
+                                                      buffer->buffer,
                                                       &memRequirements));
 
     uint32_t memoryType = findMemoryType(context->device,
                                          memRequirements.memoryTypeBits,
-                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                                         properties);
 
     VkMemoryAllocateInfo allocInfo;
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
@@ -1007,15 +1009,26 @@ void ovrVertexBuffer_Create(ovrVkContext *context, const ovrVertex *vertices, ui
     allocInfo.memoryTypeIndex = memoryType;
 
     VK(context->device->vkAllocateMemory(context->device->device, &allocInfo, VK_ALLOCATOR,
-                                         &vertexBuffer->vertexBufferMemory))
-    VK(context->device->vkBindBufferMemory(context->device->device, vertexBuffer->vertexBuffer, vertexBuffer->vertexBufferMemory, 0));
+                                         &buffer->bufferMemory))
+    VK(context->device->vkBindBufferMemory(context->device->device, buffer->buffer,
+                                           buffer->bufferMemory, 0));
+}
+
+void
+ovrBuffer_Vertex_Create(ovrVkContext *context, const ovrVertex *vertices, uint32_t verticesLength,
+                        ovrBuffer *buffer) {
+    VkDeviceSize size = sizeof(ovrVertex) * verticesLength;
+    ovrBuffer_Create(context, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                     size, buffer);
 
     void *data;
-    VK(context->device->vkMapMemory(context->device->device, vertexBuffer->vertexBufferMemory, 0,
-                                    bufferInfo.size, 0, &data));
-    memcpy(data, vertices, (size_t) bufferInfo.size);
-    VC(context->device->vkUnmapMemory(context->device->device, vertexBuffer->vertexBufferMemory));
+    VK(context->device->vkMapMemory(context->device->device, buffer->bufferMemory, 0,
+                                    size, 0, &data));
+    memcpy(data, vertices, (size_t) size);
+    VC(context->device->vkUnmapMemory(context->device->device, buffer->bufferMemory));
 }
+
 
 uint32_t findMemoryType(ovrVkDevice *device, uint32_t typeFilter,
                         VkMemoryPropertyFlags properties) {
@@ -1023,7 +1036,8 @@ uint32_t findMemoryType(ovrVkDevice *device, uint32_t typeFilter,
 
     for (uint32_t i = 0; i < device->physicalDeviceMemoryProperties.memoryTypeCount; i++) {
         if ((typeFilter & (1 << i)) &&
-            (device->physicalDeviceMemoryProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+            (device->physicalDeviceMemoryProperties.memoryTypes[i].propertyFlags & properties) ==
+            properties) {
             return i;
         }
     }
@@ -1483,7 +1497,7 @@ void ovrVkCommandBuffer_EndRenderPass(
 
 void ovrVkCommandBuffer_SubmitGraphicsCommand(
         ovrVkCommandBuffer *commandBuffer,
-        const ovrVertexBuffer *vertexBuffer,
+        const ovrBuffer *vertexBuffer,
         const ovrVkGraphicsCommand *command,
         uint32_t verticesLength) {
     assert(commandBuffer->currentRenderPass != NULL);
@@ -1499,7 +1513,7 @@ void ovrVkCommandBuffer_SubmitGraphicsCommand(
                 cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, command->pipeline->pipeline));
     }
 
-    VkBuffer vertexBuffers[] = {vertexBuffer->vertexBuffer};
+    VkBuffer vertexBuffers[] = {vertexBuffer->buffer};
     VkDeviceSize offsets[] = {0};
     VC(device->vkCmdBindVertexBuffers(cmdBuffer, 0, 1, vertexBuffers, offsets));
 

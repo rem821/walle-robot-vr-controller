@@ -263,7 +263,7 @@ typedef struct {
     ovrVkRenderPass RenderPassSingleView;
     ovrVkCommandBuffer EyeCommandBuffer[VRAPI_FRAME_LAYER_EYE_MAX];
     ovrFrameBuffer Framebuffer[VRAPI_FRAME_LAYER_EYE_MAX];
-    ovrVertexBuffer VertexBuffer[VRAPI_FRAME_LAYER_EYE_MAX];
+    ovrBuffer VertexBuffer[VRAPI_FRAME_LAYER_EYE_MAX];
     int NumEyes;
 } ovrRenderer;
 
@@ -338,7 +338,7 @@ static void ovrScene_Destroy(ovrVkContext *context, ovrScene *scene) {
     scene->CreatedScene = false;
 }
 
-static void ovrScene_Render(ovrVkCommandBuffer *commandBuffer, ovrVertexBuffer *vertexBuffer, ovrScene *scene) {
+static void ovrScene_Render(ovrVkCommandBuffer *commandBuffer, ovrBuffer *vertexBuffer, ovrScene *scene) {
     ovrVkGraphicsCommand command;
     ovrVkGraphicsCommand_Init(&command);
     ovrVkGraphicsCommand_SetPipeline(&command, &scene->Pipelines);
@@ -403,7 +403,7 @@ static void ovrRenderer_Create(ovrRenderer *renderer, ovrVkContext *context, con
                 vrapi_GetSystemPropertyInt(java, VRAPI_SYS_PROP_SUGGESTED_EYE_TEXTURE_HEIGHT));
         ovrColorSwapChain_Destroy(&colorSwapChains[eye]);
 
-        ovrVertexBuffer_Create(context, vertices, VERTICES_LENGTH, &renderer->VertexBuffer[eye]);
+        ovrBuffer_Vertex_Create(context, vertices, VERTICES_LENGTH, &renderer->VertexBuffer[eye]);
         ovrVkCommandBuffer_Create(
                 context,
                 &renderer->EyeCommandBuffer[eye],
