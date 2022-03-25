@@ -19,8 +19,10 @@ LOCAL_C_INCLUDES := \
   $(LOCAL_PATH)/../../../../1stParty/OVR/Include \
   $(LOCAL_PATH)/../../../../1stParty/utilities/include \
   $(LOCAL_PATH)/../../../../3rdParty/stb/src \
+  $(LOCAL_PATH)/../../../../3rdParty/cglm/src \
+  $(LOCAL_PATH)/../../../../3rdParty/cglm/include \
 
-LOCAL_STATIC_LIBRARIES += minizip stb android_native_app_glue samplecommon
+LOCAL_STATIC_LIBRARIES += minizip stb android_native_app_glue samplecommon cglm
 LOCAL_SRC_FILES := \
   ../../../Src/Appl.cpp \
   ../../../Src/Input/HandMaskRenderer.cpp \
@@ -35,5 +37,6 @@ include $(BUILD_STATIC_LIBRARY)
 
 $(call import-module,3rdParty/minizip/build/android/jni)
 $(call import-module,3rdParty/stb/build/android/jni)
+$(call import-module,3rdParty/cglm/build/android/jni)
 $(call import-module,android/native_app_glue)
 $(call import-module,SampleCommon/Projects/Android/jni)

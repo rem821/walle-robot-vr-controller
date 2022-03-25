@@ -25,6 +25,7 @@ Copyright   :   Copyright (c) Facebook Technologies, LLC and its affiliates. All
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
 #include <limits.h>
+#include <cglm/cglm.h>
 
 #include "Framework_Vulkan.h"
 
@@ -271,6 +272,10 @@ typedef struct {
     ovrFrameBuffer Framebuffer[VRAPI_FRAME_LAYER_EYE_MAX];
     ovrBuffer VertexBuffer[VRAPI_FRAME_LAYER_EYE_MAX];
     ovrBuffer IndexBuffer[VRAPI_FRAME_LAYER_EYE_MAX];
+    ovrBuffer UniformBuffer[VRAPI_FRAME_LAYER_EYE_MAX];
+    VkDescriptorSetLayout descriptorSetLayout;
+    VkDescriptorPool descriptorPool;
+    VkDescriptorSet descriptorSet[VRAPI_FRAME_LAYER_EYE_MAX];
     int NumEyes;
 } ovrRenderer;
 
@@ -297,6 +302,7 @@ static void ovrScene_Create(AAssetManager *aassetManager, ovrVkContext *context,
     ovrVkGraphicsProgram_Create(
             context,
             &scene->Program,
+            &renderer->descriptorSetLayout,
             vertexShaderFile.shaderFile,
             vertexShaderFile.shaderFileLength,
             fragmentShaderFile.shaderFile,
@@ -314,7 +320,7 @@ static void ovrScene_Create(AAssetManager *aassetManager, ovrVkContext *context,
     pipelineParms.rop.blueWriteEnable = true;
     pipelineParms.rop.greenWriteEnable = true;
     pipelineParms.rop.alphaWriteEnable = false;
-    pipelineParms.rop.frontFace = OVR_FRONT_FACE_CLOCKWISE;
+    pipelineParms.rop.frontFace = OVR_FRONT_FACE_COUNTER_CLOCKWISE;
     pipelineParms.rop.cullMode = OVR_CULL_MODE_BACK;
     pipelineParms.rop.depthCompare = OVR_COMPARE_OP_LESS_OR_EQUAL;
     pipelineParms.rop.blendColor.x = 0.0f;
@@ -346,12 +352,15 @@ static void ovrScene_Destroy(ovrVkContext *context, ovrScene *scene) {
 }
 
 static void
-ovrScene_Render(ovrVkCommandBuffer *commandBuffer, ovrBuffer *vertexBuffer, ovrBuffer *indexBuffer, ovrScene *scene) {
+ovrScene_Render(ovrVkCommandBuffer *commandBuffer, ovrBuffer *vertexBuffer, ovrBuffer *indexBuffer,
+                VkDescriptorSet *descriptorSet, VkPipelineLayout *pipelineLayout,
+                ovrVkGraphicsPipeline *pipeline) {
     ovrVkGraphicsCommand command;
     ovrVkGraphicsCommand_Init(&command);
-    ovrVkGraphicsCommand_SetPipeline(&command, &scene->Pipelines);
+    ovrVkGraphicsCommand_SetPipeline(&command, pipeline);
 
     ovrVkCommandBuffer_SubmitGraphicsCommand(commandBuffer, vertexBuffer, indexBuffer, &command,
+                                             pipelineLayout, descriptorSet,
                                              VERTICES_LENGTH, INDICES_LENGTH);
 }
 
@@ -414,12 +423,23 @@ static void ovrRenderer_Create(ovrRenderer *renderer, ovrVkContext *context, con
 
         ovrBuffer_Vertex_Create(context, vertices, VERTICES_LENGTH, &renderer->VertexBuffer[eye]);
         ovrBuffer_Index_Create(context, indices, INDICES_LENGTH, &renderer->IndexBuffer[eye]);
+        ovrBuffer_Uniform_Create(context, &renderer->UniformBuffer[eye]);
+
         ovrVkCommandBuffer_Create(
                 context,
                 &renderer->EyeCommandBuffer[eye],
                 OVR_COMMAND_BUFFER_TYPE_PRIMARY,
                 ovrVkFramebuffer_GetBufferCount(&renderer->Framebuffer[eye].Framebuffer));
     }
+
+    VkDescriptorSetLayout_Create(context, &renderer->descriptorSetLayout);
+    VkDescriptorPool_Create(context, &renderer->descriptorPool);
+
+    VkDescriptorSet_Create(context, &renderer->descriptorSetLayout,
+                           renderer->descriptorPool,
+                           renderer->UniformBuffer,
+                           renderer->descriptorSet);
+
 }
 
 static void ovrRenderer_Destroy(ovrRenderer *renderer, ovrVkContext *context) {
@@ -432,7 +452,30 @@ static void ovrRenderer_Destroy(ovrRenderer *renderer, ovrVkContext *context) {
     ovrVkRenderPass_Destroy(context, &renderer->RenderPassSingleView);
 }
 
+static void updateUniformBuffer(ovrVkContext *context, long long frameIndex, ovrBuffer *uniformBuffer) {
+    ovrUniformBufferObject ubo;
+
+    float time = ((float)frameIndex/90.0f);
+
+    vec3 rot = {0.0f, 0.0f, 1.0f};
+    mat4 rotation = GLM_MAT4_IDENTITY_INIT;
+    glm_rotate(rotation, time * glm_rad(90.0f), rot);
+    glm_mat4_copy(rotation, ubo.model);
+    //glm_mat4_identity(ubo.model);
+    glm_mat4_identity(ubo.view);
+    glm_mat4_identity(ubo.proj);
+
+    ubo.proj[1][1] *= -1;
+
+    void *data;
+    VC(context->device->vkMapMemory(context->device->device, uniformBuffer->bufferMemory, 0,
+                                    sizeof(ubo), 0, &data));
+    memcpy(data, &ubo, sizeof(ubo));
+    VC(context->device->vkUnmapMemory(context->device->device, uniformBuffer->bufferMemory));
+}
+
 static ovrLayerProjection2 ovrRenderer_RenderFrame(
+        ovrVkContext *context,
         ovrRenderer *renderer,
         long long frameIndex,
         ovrScene *scene,
@@ -442,6 +485,8 @@ static ovrLayerProjection2 ovrRenderer_RenderFrame(
     for (int eye = 0; eye < renderer->NumEyes; eye++) {
         const ovrScreenRect screenRect =
                 ovrVkFramebuffer_GetRect(&renderer->Framebuffer[eye].Framebuffer);
+
+        updateUniformBuffer(context, frameIndex, &renderer->UniformBuffer[eye]);
 
         ovrVkCommandBuffer_BeginPrimary(&renderer->EyeCommandBuffer[eye]);
         ovrVkCommandBuffer_BeginFramebuffer(
@@ -455,7 +500,9 @@ static ovrLayerProjection2 ovrRenderer_RenderFrame(
                 &renderer->Framebuffer[eye].Framebuffer,
                 &screenRect);
 
-        ovrScene_Render(&renderer->EyeCommandBuffer[eye], &renderer->VertexBuffer[eye], &renderer->IndexBuffer[eye], scene);
+        ovrScene_Render(&renderer->EyeCommandBuffer[eye], &renderer->VertexBuffer[eye],
+                        &renderer->IndexBuffer[eye], &renderer->descriptorSet[eye],
+                        &scene->Program.pipelineLayout, &scene->Pipelines);
 
         ovrVkCommandBuffer_EndRenderPass(
                 &renderer->EyeCommandBuffer[eye], &renderer->RenderPassSingleView);
@@ -868,6 +915,7 @@ void android_main(struct android_app *app) {
 
         // Render eye images and setup ovrFrameParms using ovrTracking2.
         const ovrLayerProjection2 worldLayer = ovrRenderer_RenderFrame(
+                &appState.Context,
                 &appState.Renderer,
                 appState.FrameIndex,
                 &appState.Scene,

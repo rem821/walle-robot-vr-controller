@@ -17,6 +17,7 @@ LOCAL_C_INCLUDES := \
     $(LOCAL_PATH)/../../1stParty/OVR/Include \
     $(LOCAL_PATH)/../../1stParty/utilities/include \
     $(LOCAL_PATH)/../../3rdParty/stb/src \
+	$(LOCAL_PATH)/../../3rdParty/cglm/include \
 
 include $(BUILD_SHARED_LIBRARY)
 

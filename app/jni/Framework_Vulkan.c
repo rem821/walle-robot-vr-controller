@@ -854,6 +854,7 @@ int ovrVkFramebuffer_GetBufferCount(const ovrVkFramebuffer *framebuffer) {
 
 void VkPipelineLayout_Create(
         ovrVkContext *context,
+        VkDescriptorSetLayout *descriptorSetLayout,
         VkPipelineLayout *layout) {
     memset(layout, 0, sizeof(VkPipelineLayout));
 
@@ -862,8 +863,8 @@ void VkPipelineLayout_Create(
     pipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutCreateInfo.pNext = NULL;
     pipelineLayoutCreateInfo.flags = 0;
-    pipelineLayoutCreateInfo.setLayoutCount = 0;
-    pipelineLayoutCreateInfo.pSetLayouts = NULL;
+    pipelineLayoutCreateInfo.setLayoutCount = 1;
+    pipelineLayoutCreateInfo.pSetLayouts = descriptorSetLayout;
     pipelineLayoutCreateInfo.pushConstantRangeCount = 0;
     pipelineLayoutCreateInfo.pPushConstantRanges = NULL;
 
@@ -893,6 +894,7 @@ For optimal performance a graphics program should only be created at load time, 
 bool ovrVkGraphicsProgram_Create(
         ovrVkContext *context,
         ovrVkGraphicsProgram *program,
+        VkDescriptorSetLayout *descriptorSetLayout,
         const void *vertexSourceData,
         const size_t vertexSourceSize,
         const void *fragmentSourceData,
@@ -927,7 +929,7 @@ bool ovrVkGraphicsProgram_Create(
     program->pipelineStages[1].pName = "main";
     program->pipelineStages[1].pSpecializationInfo = NULL;
 
-    VkPipelineLayout_Create(context, &program->pipelineLayout);
+    VkPipelineLayout_Create(context, descriptorSetLayout, &program->pipelineLayout);
 
     return true;
 }
@@ -1049,8 +1051,8 @@ ovrBuffer_Vertex_Create(ovrVkContext *context, const ovrVertex *vertices, uint32
 }
 
 void
-ovrBuffer_Index_Create(ovrVkContext *context, const ovrVertex *indices, uint32_t indicesLength,
-                        ovrBuffer *buffer) {
+ovrBuffer_Index_Create(ovrVkContext *context, const uint16_t *indices, uint32_t indicesLength,
+                       ovrBuffer *buffer) {
     VkDeviceSize size = sizeof(uint16_t) * indicesLength;
     ovrBuffer *stagingBuffer = malloc(sizeof(ovrBuffer));
 
@@ -1065,7 +1067,7 @@ ovrBuffer_Index_Create(ovrVkContext *context, const ovrVertex *indices, uint32_t
     VC(context->device->vkUnmapMemory(context->device->device, stagingBuffer->bufferMemory));
 
     ovrBuffer_Create(context, VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-                             VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                              VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                      size, buffer);
 
@@ -1075,6 +1077,14 @@ ovrBuffer_Index_Create(ovrVkContext *context, const ovrVertex *indices, uint32_t
                                         VK_ALLOCATOR));
     VC(context->device->vkFreeMemory(context->device->device, stagingBuffer->bufferMemory,
                                      VK_ALLOCATOR));
+}
+
+void ovrBuffer_Uniform_Create(ovrVkContext *context, ovrBuffer *buffer) {
+    VkDeviceSize size = sizeof(ovrUniformBufferObject);
+
+    ovrBuffer_Create(context, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                     size, buffer);
 }
 
 void
@@ -1136,6 +1146,89 @@ int32_t findMemoryType(ovrVkDevice *device, uint32_t typeFilter,
     }
 
     return -1;
+}
+
+/*
+================================================================================================================================
+
+DescriptorSet layout
+
+================================================================================================================================
+*/
+
+void
+VkDescriptorSetLayout_Create(ovrVkContext *context, VkDescriptorSetLayout *descriptorSetLayout) {
+    VkDescriptorSetLayoutBinding uboLayoutBinding;
+    uboLayoutBinding.binding = 0;
+    uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    uboLayoutBinding.descriptorCount = 1;
+    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    uboLayoutBinding.pImmutableSamplers = NULL;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo;
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.pNext = NULL;
+    layoutInfo.flags = 0;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &uboLayoutBinding;
+
+    VK(context->device->vkCreateDescriptorSetLayout(context->device->device, &layoutInfo,
+                                                    VK_ALLOCATOR, descriptorSetLayout));
+}
+
+void VkDescriptorPool_Create(ovrVkContext *context, VkDescriptorPool *descriptorPool) {
+    VkDescriptorPoolSize poolSize;
+    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSize.descriptorCount = VRAPI_FRAME_LAYER_EYE_MAX;
+
+    VkDescriptorPoolCreateInfo poolInfo;
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.pNext = NULL;
+    poolInfo.flags = 0;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.maxSets = VRAPI_FRAME_LAYER_EYE_MAX;
+
+    VK(context->device->vkCreateDescriptorPool(context->device->device, &poolInfo, VK_ALLOCATOR,
+                                               descriptorPool));
+}
+
+void VkDescriptorSet_Create(ovrVkContext *context, VkDescriptorSetLayout *descriptorSetLayout,
+                            VkDescriptorPool descriptorPool, ovrBuffer *uniformBuffers,
+                            VkDescriptorSet *descriptorSets) {
+
+    VkDescriptorSetLayout setLayouts[] = {*descriptorSetLayout, *descriptorSetLayout};
+    VkDescriptorSetAllocateInfo allocInfo;
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.pNext = NULL;
+    allocInfo.descriptorPool = descriptorPool;
+    allocInfo.descriptorSetCount = VRAPI_FRAME_LAYER_EYE_MAX;
+    allocInfo.pSetLayouts = setLayouts;
+
+    VK(context->device->vkAllocateDescriptorSets(context->device->device, &allocInfo,
+                                                 descriptorSets));
+
+    for (size_t i = 0; i < VRAPI_FRAME_LAYER_EYE_MAX; i++) {
+        VkDescriptorBufferInfo bufferInfo;
+        bufferInfo.buffer = uniformBuffers[i].buffer;
+        bufferInfo.offset = 0;
+        bufferInfo.range = sizeof(ovrUniformBufferObject);
+
+        VkWriteDescriptorSet descriptorWrite;
+        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrite.pNext = NULL;
+        descriptorWrite.dstSet = descriptorSets[i];
+        descriptorWrite.dstBinding = 0;
+        descriptorWrite.dstArrayElement = 0;
+        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrite.descriptorCount = 1;
+        descriptorWrite.pBufferInfo = &bufferInfo;
+        descriptorWrite.pImageInfo = NULL;
+        descriptorWrite.pTexelBufferView = NULL;
+
+        VC(context->device->vkUpdateDescriptorSets(context->device->device, 1, &descriptorWrite, 0,
+                                                   VK_ALLOCATOR));
+    }
 }
 
 /*
@@ -1593,6 +1686,8 @@ void ovrVkCommandBuffer_SubmitGraphicsCommand(
         const ovrBuffer *vertexBuffer,
         const ovrBuffer *indexBuffer,
         const ovrVkGraphicsCommand *command,
+        VkPipelineLayout *pipelineLayout,
+        const VkDescriptorSet *descriptorSet,
         uint32_t verticesLength,
         uint32_t indicesLength) {
     assert(commandBuffer->currentRenderPass != NULL);
@@ -1613,6 +1708,9 @@ void ovrVkCommandBuffer_SubmitGraphicsCommand(
 
     VC(device->vkCmdBindVertexBuffers(cmdBuffer, 0, 1, vertexBuffers, offsets));
     VC(device->vkCmdBindIndexBuffer(cmdBuffer, indexBuffer->buffer, 0, VK_INDEX_TYPE_UINT16));
+
+    VC(device->vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, *pipelineLayout,
+                                       0, 1, descriptorSet, 0, VK_ALLOCATOR));
 
     VC(device->vkCmdDrawIndexed(cmdBuffer, indicesLength, 1, 0, 0, 0));
 

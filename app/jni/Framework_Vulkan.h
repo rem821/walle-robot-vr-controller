@@ -41,6 +41,7 @@ Common headers
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h> // for memset
+#include <cglm/cglm.h>
 
 /*
 ================================
@@ -472,6 +473,7 @@ Vulkan program parms and layout.
 
 void VkPipelineLayout_Create(
         ovrVkContext *context,
+        VkDescriptorSetLayout *descriptorSetLayout,
         VkPipelineLayout *layout);
 
 void VkPipelineLayout_Destroy(ovrVkContext *context, VkPipelineLayout *layout);
@@ -499,6 +501,7 @@ typedef struct {
 bool ovrVkGraphicsProgram_Create(
         ovrVkContext *context,
         ovrVkGraphicsProgram *program,
+        VkDescriptorSetLayout *descriptorSetLayout,
         const void *vertexSourceData,
         const size_t vertexSourceSize,
         const void *fragmentSourceData,
@@ -725,6 +728,8 @@ void ovrVkCommandBuffer_SubmitGraphicsCommand(
         const ovrBuffer *vertexBuffer,
         const ovrBuffer *indexBuffer,
         const ovrVkGraphicsCommand *command,
+        VkPipelineLayout *pipelineLayout,
+        const VkDescriptorSet *descriptorSet,
         uint32_t verticesLength,
         uint32_t indicesLength);
 
@@ -736,13 +741,52 @@ Vulkan buffer.
 ================================================================================================================================
 */
 
-void ovrBuffer_Create(ovrVkContext *context, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkDeviceSize size, ovrBuffer *buffer);
+void
+ovrBuffer_Create(ovrVkContext *context, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
+                 VkDeviceSize size, ovrBuffer *buffer);
 
-void ovrBuffer_Vertex_Create(ovrVkContext *context, const ovrVertex *vertices, uint32_t verticesLength, ovrBuffer *buffer);
+void
+ovrBuffer_Vertex_Create(ovrVkContext *context, const ovrVertex *vertices, uint32_t verticesLength,
+                        ovrBuffer *buffer);
 
-void ovrBuffer_Index_Create(ovrVkContext *context, const ovrVertex *indices, uint32_t indicesLength, ovrBuffer *buffer);
+void ovrBuffer_Index_Create(ovrVkContext *context, const uint16_t *indices, uint32_t indicesLength,
+                            ovrBuffer *buffer);
+
+void ovrBuffer_Uniform_Create(ovrVkContext *context, ovrBuffer *buffer);
 
 void copyBuffer(ovrVkContext *context, ovrBuffer srcBuffer, ovrBuffer dstBuffer, VkDeviceSize size);
 
 int32_t findMemoryType(ovrVkDevice *device, uint32_t typeFilter,
-                        VkMemoryPropertyFlags properties);
+                       VkMemoryPropertyFlags properties);
+
+/*
+================================================================================================================================
+
+OvrUniformBufferObject.
+
+================================================================================================================================
+*/
+
+typedef struct {
+    mat4 model;
+    mat4 view;
+    mat4 proj;
+} ovrUniformBufferObject;
+
+/*
+================================================================================================================================
+
+DescriptorSet layout.
+
+================================================================================================================================
+*/
+
+void
+VkDescriptorSetLayout_Create(ovrVkContext *context, VkDescriptorSetLayout *descriptorSetLayout);
+
+
+void VkDescriptorPool_Create(ovrVkContext *context, VkDescriptorPool *descriptorPool);
+
+void VkDescriptorSet_Create(ovrVkContext *context, VkDescriptorSetLayout *descriptorSetLayout,
+                            VkDescriptorPool descriptorPool, ovrBuffer *uniformBuffers,
+                            VkDescriptorSet *descriptorSet);
