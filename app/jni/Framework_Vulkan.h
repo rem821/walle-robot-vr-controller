@@ -1,22 +1,3 @@
-/************************************************************************************
-
-Filename	:	Framework_Vulkan.h
-Content		:	Vulkan Framework
-Created		:	October, 2017
-Authors		:	J.M.P. van Waveren
-
-Copyright	:	Copyright (c) Facebook Technologies, LLC and its affiliates. All rights reserved.
-
-*************************************************************************************/
-
-/*
-================================
-Platform headers / declarations
-================================
-*/
-
-#define VK_USE_PLATFORM_ANDROID_KHR
-
 #include <vulkan/vulkan.h>
 
 #define VULKAN_LOADER "libvulkan.so"
@@ -92,14 +73,23 @@ ovrVertex
 ================================================================================================================================
 */
 typedef struct {
-    ovrVector2f pos;
-    ovrVector3f color;
+    vec2 pos;
+    vec3 color;
+    vec2 texCoord;
 } ovrVertex;
 
 typedef struct {
     VkBuffer buffer;
     VkDeviceMemory bufferMemory;
 } ovrBuffer;
+
+typedef struct {
+    VkImage textureImage;
+    VkDeviceMemory textureImageMemory;
+    VkImageView imageView;
+    VkSampler textureSampler;
+} ovrImage;
+
 
 VkVertexInputBindingDescription *getVertexInputBindingDescription();
 
@@ -327,6 +317,7 @@ typedef struct {
     PFN_vkCmdPushConstants vkCmdPushConstants;
     PFN_vkCmdBeginRenderPass vkCmdBeginRenderPass;
     PFN_vkCmdEndRenderPass vkCmdEndRenderPass;
+    PFN_vkCmdCopyBufferToImage vkCmdCopyBufferToImage;
 
 } ovrVkDevice;
 
@@ -352,28 +343,6 @@ For optimal performance a context should only be created at load time, not at ru
 
 ================================================================================================================================
 */
-
-typedef enum {
-    OVR_SURFACE_COLOR_FORMAT_R5G6B5,
-    OVR_SURFACE_COLOR_FORMAT_B5G6R5,
-    OVR_SURFACE_COLOR_FORMAT_R8G8B8A8,
-    OVR_SURFACE_COLOR_FORMAT_B8G8R8A8,
-    OVR_SURFACE_COLOR_FORMAT_MAX
-} ovrSurfaceColorFormat;
-
-typedef enum {
-    OVR_SURFACE_DEPTH_FORMAT_NONE,
-    OVR_SURFACE_DEPTH_FORMAT_D16,
-    OVR_SURFACE_DEPTH_FORMAT_D24,
-    OVR_SURFACE_DEPTH_FORMAT_MAX
-} ovrSurfaceDepthFormat;
-
-typedef enum {
-    OVR_SAMPLE_COUNT_1 = VK_SAMPLE_COUNT_1_BIT,
-    OVR_SAMPLE_COUNT_2 = VK_SAMPLE_COUNT_2_BIT,
-    OVR_SAMPLE_COUNT_4 = VK_SAMPLE_COUNT_4_BIT,
-    OVR_SAMPLE_COUNT_8 = VK_SAMPLE_COUNT_8_BIT,
-} ovrSampleCount;
 
 typedef struct {
     ovrVkDevice *device;
@@ -401,22 +370,10 @@ Render passes cannot overlap and cannot be nested.
 
 ================================================================================================================================
 */
-typedef enum {
-    OVR_RENDERPASS_TYPE_INLINE,
-    OVR_RENDERPASS_TYPE_SECONDARY_COMMAND_BUFFERS
-} ovrVkRenderPassType;
-
-typedef enum {
-    OVR_RENDERPASS_FLAG_CLEAR_COLOR_BUFFER = 1 << 0,
-    OVR_RENDERPASS_FLAG_CLEAR_DEPTH_BUFFER = 1 << 1,
-    OVR_RENDERPASS_FLAG_INCLUDE_FRAG_DENSITY = 1 << 2,
-} ovrVkRenderPassFlags;
 
 typedef struct {
-    ovrVkRenderPassType type;
-    int flags;
-    ovrSurfaceColorFormat colorFormat;
-    ovrSampleCount sampleCount;
+    VkFormat colorFormat;
+    VkSampleCountFlagBits sampleCount;
     VkFormat internalColorFormat;
     VkRenderPass renderPass;
     ovrVector4f clearColor;
@@ -425,10 +382,8 @@ typedef struct {
 bool ovrVkRenderPass_Create(
         ovrVkContext *context,
         ovrVkRenderPass *renderPass,
-        const ovrSurfaceColorFormat colorFormat,
-        const ovrSampleCount sampleCount,
-        const ovrVkRenderPassType type,
-        const int flags,
+        const VkFormat colorFormat,
+        const VkSampleCountFlagBits sampleCount,
         const ovrVector4f *clearColor);
 
 void ovrVkRenderPass_Destroy(ovrVkContext *context, ovrVkRenderPass *renderPass);
@@ -754,7 +709,11 @@ void ovrBuffer_Index_Create(ovrVkContext *context, const uint16_t *indices, uint
 
 void ovrBuffer_Uniform_Create(ovrVkContext *context, ovrBuffer *buffer);
 
-void copyBuffer(ovrVkContext *context, ovrBuffer srcBuffer, ovrBuffer dstBuffer, VkDeviceSize size);
+void copyBuffer(ovrVkContext *context, ovrBuffer *srcBuffer, ovrBuffer *dstBuffer, VkDeviceSize size);
+
+VkCommandBuffer *beginSingleTimeCommands(ovrVkContext *context);
+
+void endSingleTimeCommands(ovrVkContext *context, VkCommandBuffer *commandBuffer);
 
 int32_t findMemoryType(ovrVkDevice *device, uint32_t typeFilter,
                        VkMemoryPropertyFlags properties);
@@ -789,4 +748,32 @@ void VkDescriptorPool_Create(ovrVkContext *context, VkDescriptorPool *descriptor
 
 void VkDescriptorSet_Create(ovrVkContext *context, VkDescriptorSetLayout *descriptorSetLayout,
                             VkDescriptorPool descriptorPool, ovrBuffer *uniformBuffers,
+                            ovrImage *textureImage,
                             VkDescriptorSet *descriptorSet);
+
+/*
+================================================================================================================================
+
+Images, samplers.
+
+================================================================================================================================
+*/
+
+void
+createTextureImage(ovrVkContext *context, unsigned char *imageHandle, uint32_t texWidth,
+                   uint32_t texHeight,
+                   ovrImage *textureImage);
+
+void createImage(ovrVkContext *context, uint32_t width, uint32_t height, VkFormat format,
+                 VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties,
+                 ovrImage *image);
+
+void transitionImageLayout(ovrVkContext *context, VkImage *image,
+                           VkImageLayout oldLayout, VkImageLayout newLayout);
+
+void copyBufferToImage(ovrVkContext *context, VkBuffer *buffer, VkImage *image, uint32_t width,
+                       uint32_t height);
+
+void createTextureImageView(ovrVkContext *context, ovrImage *textureImage);
+
+void createTextureSampler(ovrVkContext *context, ovrImage *image);

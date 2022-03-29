@@ -27,7 +27,7 @@
         <meta-data android:name="com.oculus.supportedDevices" android:value="all" />
 
         <activity
-            android:name=".ControlActivity2"
+            android:name=".ControlActivity"
             android:screenOrientation="landscape"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
             android:configChanges="density|keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|uiMode"
@@ -35,7 +35,7 @@
             android:resizeableActivity="false"
             android:exported="true">
 
-            <meta-data android:name="android.app.lib_name" android:value="GStreamerModule" />
+            <meta-data android:name="android.app.lib_name" android:value="WalleVrControllerModule" />
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

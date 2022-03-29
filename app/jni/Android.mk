@@ -3,8 +3,8 @@ include $(CLEAR_VARS)
 
 include $(LOCAL_PATH)/../../cflags.mk
 
-LOCAL_MODULE    := GStreamerModule
-LOCAL_SRC_FILES := Framework_Vulkan.c VrCubeWorld_Vulkan.c
+LOCAL_MODULE    := WalleVrControllerModule
+LOCAL_SRC_FILES := Framework_Vulkan.c Framework_Gstreamer.c WalleVrController.c
 LOCAL_STATIC_LIBRARIES := sampleframework android_native_app_glue
 LOCAL_SHARED_LIBRARIES := gstreamer_android vrapi
 LOCAL_LDLIBS := -lEGL -lGLESv3 -landroid -llog -lz

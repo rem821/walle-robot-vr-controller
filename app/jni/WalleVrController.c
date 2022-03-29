@@ -1,17 +1,3 @@
-/************************************************************************************
-
-Filename    :   VrCubeWorld_Vulkan.c
-Content     :   This sample demonstrates how to use the Vulkan VrApi.
-                This sample uses the Android NativeActivity class. This sample does
-                not use the application framework.
-                This sample only uses the VrApi.
-Created     :   October, 2017
-Authors     :   J.M.P. van Waveren, Gloria Kennickell
-
-Copyright   :   Copyright (c) Facebook Technologies, LLC and its affiliates. All rights reserved.
-
-*************************************************************************************/
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -28,6 +14,7 @@ Copyright   :   Copyright (c) Facebook Technologies, LLC and its affiliates. All
 #include <cglm/cglm.h>
 
 #include "Framework_Vulkan.h"
+#include "Framework_Gstreamer.h"
 
 #include "VrApi.h"
 #include "VrApi_Vulkan.h"
@@ -36,7 +23,7 @@ Copyright   :   Copyright (c) Facebook Technologies, LLC and its affiliates. All
 #include "VrApi_Input.h"
 
 #define DEBUG 1
-#define OVR_LOG_TAG "VrCubeWorldVk"
+#define OVR_LOG_TAG "WalleVrController"
 
 #if !defined(ALOGE)
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, OVR_LOG_TAG, __VA_ARGS__)
@@ -52,14 +39,17 @@ Copyright   :   Copyright (c) Facebook Technologies, LLC and its affiliates. All
 
 static const int CPU_LEVEL = 2;
 static const int GPU_LEVEL = 3;
-static ovrSampleCount SAMPLE_COUNT = OVR_SAMPLE_COUNT_1;
+static VkSampleCountFlagBits SAMPLE_COUNT = VK_SAMPLE_COUNT_1_BIT;
+
+const uint32_t TEXTURE_WIDTH = 512;
+const uint32_t TEXTURE_HEIGHT = 512;
 
 const uint32_t VERTICES_LENGTH = 4;
 const ovrVertex vertices[] = {
-        {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-        {{0.5f,  -0.5f}, {0.0f, 1.0f, 0.0f}},
-        {{0.5f,  0.5f},  {0.0f, 0.0f, 1.0f}},
-        {{-0.5f, 0.5f},  {1.0f, 1.0f, 1.0f}}
+        {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+        {{0.5f,  -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+        {{0.5f,  0.5f},  {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+        {{-0.5f, 0.5f},  {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
 };
 
 const uint32_t INDICES_LENGTH = 6;
@@ -134,7 +124,7 @@ ovrFramebuffer
 typedef struct {
     int Width;
     int Height;
-    ovrSampleCount SampleCount;
+    VkSampleCountFlagBits SampleCount;
     int TextureSwapChainLength;
     int TextureSwapChainIndex;
     ovrTextureSwapChain *ColorTextureSwapChain;
@@ -144,7 +134,7 @@ typedef struct {
 static void ovrFramebuffer_Clear(ovrFrameBuffer *frameBuffer) {
     frameBuffer->Width = 0;
     frameBuffer->Height = 0;
-    frameBuffer->SampleCount = OVR_SAMPLE_COUNT_1;
+    frameBuffer->SampleCount = VK_SAMPLE_COUNT_1_BIT;
     frameBuffer->TextureSwapChainLength = 0;
     frameBuffer->TextureSwapChainIndex = 0;
     frameBuffer->ColorTextureSwapChain = NULL;
@@ -276,6 +266,7 @@ typedef struct {
     VkDescriptorSetLayout descriptorSetLayout;
     VkDescriptorPool descriptorPool;
     VkDescriptorSet descriptorSet[VRAPI_FRAME_LAYER_EYE_MAX];
+    ovrImage textureImage;
     int NumEyes;
 } ovrRenderer;
 
@@ -384,7 +375,8 @@ static void ovrRenderer_Clear(ovrRenderer *renderer) {
     renderer->NumEyes = VRAPI_FRAME_LAYER_EYE_MAX;
 }
 
-static void ovrRenderer_Create(ovrRenderer *renderer, ovrVkContext *context, const ovrJava *java) {
+static void ovrRenderer_Create(ovrRenderer *renderer, ovrVkContext *context, const ovrJava *java,
+                               GstreamerInstance *gstInstance) {
     renderer->NumEyes = VRAPI_FRAME_LAYER_EYE_MAX;
 
     // Get swapchain images from vrapi first so that we know what attachments to use for the
@@ -400,14 +392,11 @@ static void ovrRenderer_Create(ovrRenderer *renderer, ovrVkContext *context, con
     }
 
     ovrVector4f clearColor = {0.125f, 0.0f, 0.125f, 1.0f};
-    int flags = OVR_RENDERPASS_FLAG_CLEAR_COLOR_BUFFER;
     ovrVkRenderPass_Create(
             context,
             &renderer->RenderPassSingleView,
-            OVR_SURFACE_COLOR_FORMAT_R8G8B8A8,
+            VK_FORMAT_R8G8B8A8_UNORM,
             SAMPLE_COUNT,
-            OVR_RENDERPASS_TYPE_INLINE,
-            flags,
             &clearColor);
 
     for (int eye = 0; eye < renderer->NumEyes; eye++) {
@@ -432,12 +421,18 @@ static void ovrRenderer_Create(ovrRenderer *renderer, ovrVkContext *context, con
                 ovrVkFramebuffer_GetBufferCount(&renderer->Framebuffer[eye].Framebuffer));
     }
 
+    createTextureImage(context, gstInstance->dataHandle, TEXTURE_WIDTH, TEXTURE_HEIGHT,
+                       &renderer->textureImage);
+    createTextureImageView(context, &renderer->textureImage);
+    createTextureSampler(context, &renderer->textureImage);
+
     VkDescriptorSetLayout_Create(context, &renderer->descriptorSetLayout);
     VkDescriptorPool_Create(context, &renderer->descriptorPool);
 
     VkDescriptorSet_Create(context, &renderer->descriptorSetLayout,
                            renderer->descriptorPool,
                            renderer->UniformBuffer,
+                           &renderer->textureImage,
                            renderer->descriptorSet);
 
 }
@@ -452,14 +447,15 @@ static void ovrRenderer_Destroy(ovrRenderer *renderer, ovrVkContext *context) {
     ovrVkRenderPass_Destroy(context, &renderer->RenderPassSingleView);
 }
 
-static void updateUniformBuffer(ovrVkContext *context, long long frameIndex, ovrBuffer *uniformBuffer) {
+static void
+updateUniformBuffer(ovrVkContext *context, long long frameIndex, ovrBuffer *uniformBuffer) {
     ovrUniformBufferObject ubo;
 
-    float time = ((float)frameIndex/90.0f);
+    float time = ((float) frameIndex / 90.0f);
 
-    vec3 rot = {0.0f, 0.0f, 1.0f};
+    vec3 rot = {0.0f, 0.0f, 0.0f};
     mat4 rotation = GLM_MAT4_IDENTITY_INIT;
-    glm_rotate(rotation, time * glm_rad(90.0f), rot);
+    glm_rotate(rotation, time * glm_rad(20.0f), rot);
     glm_mat4_copy(rotation, ubo.model);
     //glm_mat4_identity(ubo.model);
     glm_mat4_identity(ubo.view);
@@ -480,7 +476,6 @@ static ovrLayerProjection2 ovrRenderer_RenderFrame(
         long long frameIndex,
         ovrScene *scene,
         const ovrTracking2 *tracking) {
-
     // Render the scene.
     for (int eye = 0; eye < renderer->NumEyes; eye++) {
         const ovrScreenRect screenRect =
@@ -552,6 +547,7 @@ typedef struct {
     int MainThreadTid;
     int RenderThreadTid;
     ovrRenderer Renderer;
+    GstreamerInstance *gstreamerInstance;
 } ovrApp;
 
 static void ovrApp_Clear(ovrApp *app) {
@@ -573,6 +569,7 @@ static void ovrApp_Clear(ovrApp *app) {
 
     ovrScene_Clear(&app->Scene);
     ovrRenderer_Clear(&app->Renderer);
+    app->gstreamerInstance = g_new0(GstreamerInstance, 1);
 }
 
 static void ovrApp_HandleVrModeChanges(ovrApp *app) {
@@ -829,8 +826,6 @@ void android_main(struct android_app *app) {
     appState.GpuLevel = GPU_LEVEL;
     appState.MainThreadTid = gettid();
 
-    ovrRenderer_Create(&appState.Renderer, &appState.Context, &appState.Java);
-
     app->userData = &appState;
     app->onAppCmd = app_handle_cmd;
 
@@ -889,6 +884,20 @@ void android_main(struct android_app *app) {
             frameDesc.Layers = layers;
 
             vrapi_SubmitFrame2(appState.Ovr, &frameDesc);
+
+            // Init Gstreamer
+            gstreamer_initialize(appState.gstreamerInstance);
+            gstreamer_play(appState.gstreamerInstance);
+
+            // Wait till the gstreamer initializes
+            while (appState.gstreamerInstance->memorySize != TEXTURE_WIDTH * TEXTURE_HEIGHT * 4) {
+                ALOGV("Waiting on the GStreamer to initialize");
+            }
+
+            ALOGV("GStreamer received first frame!");
+
+            ovrRenderer_Create(&appState.Renderer, &appState.Context, &appState.Java,
+                               appState.gstreamerInstance);
 
             // Create the scene.
             ovrScene_Create(aassetManager, &appState.Context, &appState.Scene, &appState.Renderer);

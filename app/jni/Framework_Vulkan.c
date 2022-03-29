@@ -1,15 +1,5 @@
-/************************************************************************************
-
-Filename	:	Framework_Vulkan.c
-Content		:	Vulkan Framework
-Created		:	October, 2017
-Authors		:	J.M.P. van Waveren
-
-Copyright	:	Copyright (c) Facebook Technologies, LLC and its affiliates. All rights reserved.
-
-*************************************************************************************/
-
 #include "Framework_Vulkan.h"
+#include "stb_image.h"
 #include <sys/system_properties.h>
 
 static void ParseExtensionString(
@@ -444,6 +434,7 @@ bool ovrVkDevice_SelectPhysicalDevice(
         device->workQueueFamilyIndex = workQueueFamilyIndex;
         device->presentQueueFamilyIndex = presentQueueFamilyIndex;
         device->physicalDeviceFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        device->physicalDeviceFeatures.features.samplerAnisotropy = VK_TRUE;
         device->physicalDeviceFeatures.pNext = NULL;
         device->physicalDeviceProperties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
         device->physicalDeviceProperties.pNext = NULL;
@@ -610,6 +601,9 @@ bool ovrVkDevice_Create(ovrVkDevice *device, ovrVkInstance *instance) {
 
     GET_DEVICE_PROC_ADDR(vkCmdEndRenderPass);
 
+
+    GET_DEVICE_PROC_ADDR(vkCmdCopyBufferToImage);
+
     return true;
 }
 
@@ -743,27 +737,12 @@ Render passes cannot overlap and cannot be nested.
 ================================================================================================================================
 */
 
-static VkFormat ovrGpuColorBuffer_InternalSurfaceColorFormat(
-        const ovrSurfaceColorFormat colorFormat) {
-    return (
-            (colorFormat == OVR_SURFACE_COLOR_FORMAT_R8G8B8A8)
-            ? VK_FORMAT_R8G8B8A8_UNORM
-            : ((colorFormat == OVR_SURFACE_COLOR_FORMAT_B8G8R8A8)
-               ? VK_FORMAT_B8G8R8A8_UNORM
-               : ((colorFormat == OVR_SURFACE_COLOR_FORMAT_R5G6B5)
-                  ? VK_FORMAT_R5G6B5_UNORM_PACK16
-                  : ((colorFormat == OVR_SURFACE_COLOR_FORMAT_B5G6R5)
-                     ? VK_FORMAT_B5G6R5_UNORM_PACK16
-                     : ((VK_FORMAT_UNDEFINED))))));
-}
 
 bool ovrVkRenderPass_Create(
         ovrVkContext *context,
         ovrVkRenderPass *renderPass,
-        const ovrSurfaceColorFormat colorFormat,
-        const ovrSampleCount sampleCount,
-        const ovrVkRenderPassType type,
-        const int flags,
+        const VkFormat colorFormat,
+        const VkSampleCountFlagBits sampleCount,
         const ovrVector4f *clearColor) {
     assert(
             (context->device->physicalDeviceProperties.properties.limits.framebufferColorSampleCounts &
@@ -772,11 +751,9 @@ bool ovrVkRenderPass_Create(
             (context->device->physicalDeviceProperties.properties.limits.framebufferDepthSampleCounts &
              (VkSampleCountFlags) sampleCount) != 0);
 
-    renderPass->type = type;
-    renderPass->flags = flags;
     renderPass->colorFormat = colorFormat;
     renderPass->sampleCount = sampleCount;
-    renderPass->internalColorFormat = ovrGpuColorBuffer_InternalSurfaceColorFormat(colorFormat);
+    renderPass->internalColorFormat = VK_FORMAT_R8G8B8A8_UNORM;
     renderPass->clearColor = *clearColor;
 
     VkAttachmentDescription attachment;
@@ -806,6 +783,14 @@ bool ovrVkRenderPass_Create(
     subpassDescription.preserveAttachmentCount = 0;
     subpassDescription.pPreserveAttachments = NULL;
 
+    VkSubpassDependency dependency;
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.srcAccessMask = 0;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
     VkRenderPassCreateInfo renderPassCreateInfo;
     renderPassCreateInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     renderPassCreateInfo.pNext = NULL;
@@ -814,8 +799,8 @@ bool ovrVkRenderPass_Create(
     renderPassCreateInfo.pAttachments = &attachment;
     renderPassCreateInfo.subpassCount = 1;
     renderPassCreateInfo.pSubpasses = &subpassDescription;
-    renderPassCreateInfo.dependencyCount = 0;
-    renderPassCreateInfo.pDependencies = NULL;
+    renderPassCreateInfo.dependencyCount = 1;
+    renderPassCreateInfo.pDependencies = &dependency;
 
     VK(context->device->vkCreateRenderPass(
             context->device->device, &renderPassCreateInfo, VK_ALLOCATOR, &renderPass->renderPass));
@@ -953,17 +938,25 @@ ovrVertex
 
 VkVertexInputAttributeDescription *getVertexInputAttributeDescriptions() {
     VkVertexInputAttributeDescription *descriptions = malloc(
-            sizeof(VkVertexInputAttributeDescription) * 2);
+            sizeof(VkVertexInputAttributeDescription) * 3);
 
     descriptions[0].binding = 0;
     descriptions[0].location = 0;
     descriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
     descriptions[0].offset = offsetof(ovrVertex, pos);
+    ALOGV("offsetof: pos %lu", offsetof(ovrVertex, pos));
 
     descriptions[1].binding = 0;
     descriptions[1].location = 1;
     descriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
     descriptions[1].offset = offsetof(ovrVertex, color);
+    ALOGV("offsetof: color %lu", offsetof(ovrVertex, color));
+
+    descriptions[2].binding = 0;
+    descriptions[2].location = 2;
+    descriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+    descriptions[2].offset = offsetof(ovrVertex, texCoord);
+    ALOGV("offsetof: texCoord %lu", offsetof(ovrVertex, texCoord));
 
     return descriptions;
 }
@@ -1042,7 +1035,7 @@ ovrBuffer_Vertex_Create(ovrVkContext *context, const ovrVertex *vertices, uint32
                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                      size, buffer);
 
-    copyBuffer(context, *stagingBuffer, *buffer, size);
+    copyBuffer(context, stagingBuffer, buffer, size);
 
     VC(context->device->vkDestroyBuffer(context->device->device, stagingBuffer->buffer,
                                         VK_ALLOCATOR));
@@ -1071,7 +1064,7 @@ ovrBuffer_Index_Create(ovrVkContext *context, const uint16_t *indices, uint32_t 
                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                      size, buffer);
 
-    copyBuffer(context, *stagingBuffer, *buffer, size);
+    copyBuffer(context, stagingBuffer, buffer, size);
 
     VC(context->device->vkDestroyBuffer(context->device->device, stagingBuffer->buffer,
                                         VK_ALLOCATOR));
@@ -1087,8 +1080,245 @@ void ovrBuffer_Uniform_Create(ovrVkContext *context, ovrBuffer *buffer) {
                      size, buffer);
 }
 
+void createTextureImage(ovrVkContext *context, unsigned char *imageHandle, uint32_t texWidth,
+                        uint32_t texHeight,
+                        ovrImage *textureImage) {
+    VkDeviceSize imageSize = texWidth * texHeight * 4;
+    //unsigned char *pixels = calloc(1, imageSize);
+    //memcpy(pixels, imageHandle, imageSize);
+    //memset(imageHandle, 128, imageSize);
+
+    ALOGV("Pixels[0]: R:%hhu   G:%hhu   B:%hhu   A:%hhu", imageHandle[0], imageHandle[1],
+          imageHandle[2], imageHandle[3]);
+    ALOGV("Pixels[262144]: R:%hhu   G:%hhu   B:%hhu   A:%hhu", imageHandle[1048572],
+          imageHandle[1048573], imageHandle[1048574], imageHandle[1048575]);
+
+    ovrBuffer *stagingBuffer = malloc(sizeof(ovrBuffer));
+    ovrBuffer_Create(context, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                     imageSize, stagingBuffer);
+
+    unsigned char *data;
+    VK(context->device->vkMapMemory(context->device->device, stagingBuffer->bufferMemory, 0,
+                                    imageSize, 0, (void **) &data));
+    memcpy(data, imageHandle, (size_t) imageSize);
+
+    VC(context->device->vkUnmapMemory(context->device->device, stagingBuffer->bufferMemory));
+
+    //free(pixels);
+
+    ALOGV("Pixels[0]: R:%hhu   G:%hhu   B:%hhu   A:%hhu", data[0], data[1], data[2], data[3]);
+    ALOGV("Pixels[262144]: R:%hhu   G:%hhu   B:%hhu   A:%hhu", data[1048572], data[1048573],
+          data[1048574], data[1048575]);
+
+    createImage(context, texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TILING_OPTIMAL,
+                VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, textureImage);
+
+    transitionImageLayout(context, &textureImage->textureImage, VK_IMAGE_LAYOUT_UNDEFINED,
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    copyBufferToImage(context, &stagingBuffer->buffer, &textureImage->textureImage, texWidth,
+                      texHeight);
+
+    transitionImageLayout(context, &textureImage->textureImage,
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    VC(context->device->vkDestroyBuffer(context->device->device, stagingBuffer->buffer,
+                                        VK_ALLOCATOR));
+    VC(context->device->vkFreeMemory(context->device->device, stagingBuffer->bufferMemory,
+                                     VK_ALLOCATOR));
+}
+
+void createImage(ovrVkContext *context, uint32_t width, uint32_t height, VkFormat format,
+                 VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties,
+                 ovrImage *image) {
+
+    VkImageCreateInfo imageInfo;
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.pNext = NULL;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent.width = width;
+    imageInfo.extent.height = height;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = format;
+    imageInfo.tiling = tiling;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = usage;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.flags = 0;
+
+    VK(context->device->vkCreateImage(context->device->device, &imageInfo, VK_ALLOCATOR,
+                                      &image->textureImage));
+
+    VkMemoryRequirements memRequirements;
+    VC(context->device->vkGetImageMemoryRequirements(context->device->device, image->textureImage,
+                                                     &memRequirements));
+
+    VkMemoryAllocateInfo allocInfo;
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.pNext = NULL;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(context->device, memRequirements.memoryTypeBits,
+                                               properties);
+
+    VK(context->device->vkAllocateMemory(context->device->device, &allocInfo, VK_ALLOCATOR,
+                                         &image->textureImageMemory));
+
+    VK(context->device->vkBindImageMemory(context->device->device, image->textureImage,
+                                          image->textureImageMemory, 0));
+}
+
+void transitionImageLayout(ovrVkContext *context, VkImage *image,
+                           VkImageLayout oldLayout,
+                           VkImageLayout newLayout) {
+    VkCommandBuffer *commandBuffer = beginSingleTimeCommands(context);
+
+    VkImageMemoryBarrier barrier;
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.pNext = NULL;
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = *image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+
+    VkPipelineStageFlags sourceStage;
+    VkPipelineStageFlags destinationStage;
+
+    if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED &&
+        newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+               newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else {
+        ALOGE("Unsupported layout transition!");
+        return;
+    }
+
+    VC(context->device->vkCmdPipelineBarrier(
+            *commandBuffer,
+            sourceStage, destinationStage,
+            0,
+            0, NULL,
+            0, NULL,
+            1, &barrier
+    ));
+
+    endSingleTimeCommands(context, commandBuffer);
+}
+
+void copyBufferToImage(ovrVkContext *context, VkBuffer *buffer, VkImage *image, uint32_t width,
+                       uint32_t height) {
+    VkCommandBuffer *commandBuffer = beginSingleTimeCommands(context);
+
+    VkBufferImageCopy region;
+    region.bufferOffset = 0;
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+
+    region.imageOffset.x = 0;
+    region.imageOffset.y = 0;
+    region.imageOffset.z = 0;
+
+    region.imageExtent.width = width;
+    region.imageExtent.height = height;
+    region.imageExtent.depth = 1;
+
+    VC(context->device->vkCmdCopyBufferToImage(
+            *commandBuffer,
+            *buffer,
+            *image,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            1,
+            &region
+    ));
+
+    endSingleTimeCommands(context, commandBuffer);
+}
+
+void createTextureImageView(ovrVkContext *context, ovrImage *image) {
+    VkImageViewCreateInfo viewInfo;
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.pNext = NULL;
+    viewInfo.flags = 0;
+    viewInfo.image = image->textureImage;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    viewInfo.components.r = VK_COMPONENT_SWIZZLE_R;
+    viewInfo.components.g = VK_COMPONENT_SWIZZLE_G;
+    viewInfo.components.b = VK_COMPONENT_SWIZZLE_B;
+    viewInfo.components.a = VK_COMPONENT_SWIZZLE_A;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+
+    VK(context->device->vkCreateImageView(context->device->device, &viewInfo, VK_ALLOCATOR,
+                                          &image->imageView))
+}
+
+void createTextureSampler(ovrVkContext *context, ovrImage *image) {
+    VkSamplerCreateInfo samplerInfo;
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.pNext = NULL;
+    samplerInfo.flags = 0;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    samplerInfo.anisotropyEnable = VK_FALSE;
+    samplerInfo.maxAnisotropy = 1.0f;
+    //samplerInfo.maxAnisotropy = context->device->physicalDeviceProperties.properties.limits.maxSamplerAnisotropy;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+
+    VK(context->device->vkCreateSampler(context->device->device, &samplerInfo, VK_ALLOCATOR,
+                                        &image->textureSampler));
+}
+
 void
-copyBuffer(ovrVkContext *context, ovrBuffer srcBuffer, ovrBuffer dstBuffer, VkDeviceSize size) {
+copyBuffer(ovrVkContext *context, ovrBuffer *srcBuffer, ovrBuffer *dstBuffer, VkDeviceSize size) {
+    VkCommandBuffer *commandBuffer = beginSingleTimeCommands(context);
+
+    VkBufferCopy copyRegion;
+    copyRegion.srcOffset = 0;
+    copyRegion.dstOffset = 0;
+    copyRegion.size = size;
+    VC(context->device->vkCmdCopyBuffer(*commandBuffer, srcBuffer->buffer, dstBuffer->buffer, 1,
+                                        &copyRegion));
+
+    endSingleTimeCommands(context, commandBuffer);
+}
+
+VkCommandBuffer *beginSingleTimeCommands(ovrVkContext *context) {
     VkCommandBufferAllocateInfo allocInfo;
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocInfo.pNext = NULL;
@@ -1096,24 +1326,22 @@ copyBuffer(ovrVkContext *context, ovrBuffer srcBuffer, ovrBuffer dstBuffer, VkDe
     allocInfo.commandPool = context->commandPool;
     allocInfo.commandBufferCount = 1;
 
-    VkCommandBuffer commandBuffer;
+    VkCommandBuffer *commandBuffer = malloc(sizeof(VkCommandBuffer));
     VK(context->device->vkAllocateCommandBuffers(context->device->device, &allocInfo,
-                                                 &commandBuffer));
+                                                 commandBuffer));
 
     VkCommandBufferBeginInfo beginInfo;
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     beginInfo.pNext = NULL;
     beginInfo.pInheritanceInfo = NULL;
-    VK(context->device->vkBeginCommandBuffer(commandBuffer, &beginInfo));
+    VK(context->device->vkBeginCommandBuffer(*commandBuffer, &beginInfo));
 
-    VkBufferCopy copyRegion;
-    copyRegion.srcOffset = 0;
-    copyRegion.dstOffset = 0;
-    copyRegion.size = size;
-    VC(context->device->vkCmdCopyBuffer(commandBuffer, srcBuffer.buffer, dstBuffer.buffer, 1,
-                                        &copyRegion));
-    VK(context->device->vkEndCommandBuffer(commandBuffer));
+    return commandBuffer;
+}
+
+void endSingleTimeCommands(ovrVkContext *context, VkCommandBuffer *commandBuffer) {
+    VK(context->device->vkEndCommandBuffer(*commandBuffer));
 
     VkSubmitInfo submitInfo;
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -1122,7 +1350,7 @@ copyBuffer(ovrVkContext *context, ovrBuffer srcBuffer, ovrBuffer dstBuffer, VkDe
     submitInfo.pWaitSemaphores = NULL;
     submitInfo.pWaitDstStageMask = NULL;
     submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
+    submitInfo.pCommandBuffers = commandBuffer;
     submitInfo.signalSemaphoreCount = 0;
     submitInfo.pSignalSemaphores = NULL;
 
@@ -1130,7 +1358,7 @@ copyBuffer(ovrVkContext *context, ovrBuffer srcBuffer, ovrBuffer dstBuffer, VkDe
     VK(context->device->vkQueueWaitIdle(context->queue));
 
     VC(context->device->vkFreeCommandBuffers(context->device->device, context->commandPool, 1,
-                                             &commandBuffer));
+                                             commandBuffer));
 }
 
 int32_t findMemoryType(ovrVkDevice *device, uint32_t typeFilter,
@@ -1165,28 +1393,39 @@ VkDescriptorSetLayout_Create(ovrVkContext *context, VkDescriptorSetLayout *descr
     uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     uboLayoutBinding.pImmutableSamplers = NULL;
 
+    VkDescriptorSetLayoutBinding samplerLayoutBinding;
+    samplerLayoutBinding.binding = 1;
+    samplerLayoutBinding.descriptorCount = 1;
+    samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    samplerLayoutBinding.pImmutableSamplers = NULL;
+    samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutBinding bindings[2] = {uboLayoutBinding, samplerLayoutBinding};
+
     VkDescriptorSetLayoutCreateInfo layoutInfo;
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layoutInfo.pNext = NULL;
     layoutInfo.flags = 0;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &uboLayoutBinding;
+    layoutInfo.bindingCount = 2;
+    layoutInfo.pBindings = bindings;
 
     VK(context->device->vkCreateDescriptorSetLayout(context->device->device, &layoutInfo,
                                                     VK_ALLOCATOR, descriptorSetLayout));
 }
 
 void VkDescriptorPool_Create(ovrVkContext *context, VkDescriptorPool *descriptorPool) {
-    VkDescriptorPoolSize poolSize;
-    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSize.descriptorCount = VRAPI_FRAME_LAYER_EYE_MAX;
+    VkDescriptorPoolSize poolSizes[2];
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[0].descriptorCount = VRAPI_FRAME_LAYER_EYE_MAX;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[1].descriptorCount = VRAPI_FRAME_LAYER_EYE_MAX;
 
     VkDescriptorPoolCreateInfo poolInfo;
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.pNext = NULL;
     poolInfo.flags = 0;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.poolSizeCount = 2;
+    poolInfo.pPoolSizes = poolSizes;
     poolInfo.maxSets = VRAPI_FRAME_LAYER_EYE_MAX;
 
     VK(context->device->vkCreateDescriptorPool(context->device->device, &poolInfo, VK_ALLOCATOR,
@@ -1195,6 +1434,7 @@ void VkDescriptorPool_Create(ovrVkContext *context, VkDescriptorPool *descriptor
 
 void VkDescriptorSet_Create(ovrVkContext *context, VkDescriptorSetLayout *descriptorSetLayout,
                             VkDescriptorPool descriptorPool, ovrBuffer *uniformBuffers,
+                            ovrImage *textureImage,
                             VkDescriptorSet *descriptorSets) {
 
     VkDescriptorSetLayout setLayouts[] = {*descriptorSetLayout, *descriptorSetLayout};
@@ -1214,19 +1454,34 @@ void VkDescriptorSet_Create(ovrVkContext *context, VkDescriptorSetLayout *descri
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(ovrUniformBufferObject);
 
-        VkWriteDescriptorSet descriptorWrite;
-        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptorWrite.pNext = NULL;
-        descriptorWrite.dstSet = descriptorSets[i];
-        descriptorWrite.dstBinding = 0;
-        descriptorWrite.dstArrayElement = 0;
-        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        descriptorWrite.descriptorCount = 1;
-        descriptorWrite.pBufferInfo = &bufferInfo;
-        descriptorWrite.pImageInfo = NULL;
-        descriptorWrite.pTexelBufferView = NULL;
+        VkDescriptorImageInfo imageInfo;
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        imageInfo.imageView = textureImage->imageView;
+        imageInfo.sampler = textureImage->textureSampler;
 
-        VC(context->device->vkUpdateDescriptorSets(context->device->device, 1, &descriptorWrite, 0,
+        VkWriteDescriptorSet descriptorWrites[2];
+
+        descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[0].pNext = NULL;
+        descriptorWrites[0].dstSet = descriptorSets[i];
+        descriptorWrites[0].dstBinding = 0;
+        descriptorWrites[0].dstArrayElement = 0;
+        descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrites[0].descriptorCount = 1;
+        descriptorWrites[0].pBufferInfo = &bufferInfo;
+        descriptorWrites[0].pImageInfo = NULL;
+        descriptorWrites[0].pTexelBufferView = NULL;
+
+        descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[1].pNext = NULL;
+        descriptorWrites[1].dstSet = descriptorSets[i];
+        descriptorWrites[1].dstBinding = 1;
+        descriptorWrites[1].dstArrayElement = 0;
+        descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[1].descriptorCount = 1;
+        descriptorWrites[1].pImageInfo = &imageInfo;
+
+        VC(context->device->vkUpdateDescriptorSets(context->device->device, 2, descriptorWrites, 0,
                                                    VK_ALLOCATOR));
     }
 }
@@ -1285,7 +1540,7 @@ bool ovrVkGraphicsPipeline_Create(
     pipeline->vertexInputState.flags = 0;
     pipeline->vertexInputState.vertexBindingDescriptionCount = 1;
     pipeline->vertexInputState.pVertexBindingDescriptions = bindingDescription;
-    pipeline->vertexInputState.vertexAttributeDescriptionCount = 2;
+    pipeline->vertexInputState.vertexAttributeDescriptionCount = 3;
     pipeline->vertexInputState.pVertexAttributeDescriptions = attributeDescriptions;
 
     pipeline->inputAssemblyState.sType =

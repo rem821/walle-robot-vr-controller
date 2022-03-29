@@ -30,7 +30,7 @@ android {
 
                 arguments "NDK_APPLICATION_MK=jni/Application.mk", "GSTREAMER_JAVA_SRC_DIR=src", "GSTREAMER_ROOT_ANDROID=$gstRoot", "GSTREAMER_ASSETS_DIR=src/assets"
 
-                targets "GStreamerModule"
+                targets "WalleVrControllerModule"
             }
 
             ndk {
