@@ -88,6 +88,7 @@ typedef struct {
     VkDeviceMemory textureImageMemory;
     VkImageView imageView;
     VkSampler textureSampler;
+    ovrBuffer stagingBuffer;
 } ovrImage;
 
 
@@ -709,7 +710,8 @@ void ovrBuffer_Index_Create(ovrVkContext *context, const uint16_t *indices, uint
 
 void ovrBuffer_Uniform_Create(ovrVkContext *context, ovrBuffer *buffer);
 
-void copyBuffer(ovrVkContext *context, ovrBuffer *srcBuffer, ovrBuffer *dstBuffer, VkDeviceSize size);
+void
+copyBuffer(ovrVkContext *context, ovrBuffer *srcBuffer, ovrBuffer *dstBuffer, VkDeviceSize size);
 
 VkCommandBuffer *beginSingleTimeCommands(ovrVkContext *context);
 
@@ -758,6 +760,10 @@ Images, samplers.
 
 ================================================================================================================================
 */
+
+void updateTextureImage(ovrVkContext *context, unsigned char *imageHandle, uint32_t texWidth,
+                        uint32_t texHeight,
+                        ovrImage *textureImage);
 
 void
 createTextureImage(ovrVkContext *context, unsigned char *imageHandle, uint32_t texWidth,

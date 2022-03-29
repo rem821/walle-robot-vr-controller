@@ -41,15 +41,15 @@ static const int CPU_LEVEL = 2;
 static const int GPU_LEVEL = 3;
 static VkSampleCountFlagBits SAMPLE_COUNT = VK_SAMPLE_COUNT_1_BIT;
 
-const uint32_t TEXTURE_WIDTH = 512;
-const uint32_t TEXTURE_HEIGHT = 512;
+const uint32_t TEXTURE_WIDTH = 1920;
+const uint32_t TEXTURE_HEIGHT = 1080;
 
 const uint32_t VERTICES_LENGTH = 4;
 const ovrVertex vertices[] = {
-        {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-        {{0.5f,  -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-        {{0.5f,  0.5f},  {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-        {{-0.5f, 0.5f},  {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
+        {{-0.6f, -0.6f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+        {{0.6f,  -0.6f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+        {{0.6f,  0.6f},  {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+        {{-0.6f, 0.6f},  {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
 };
 
 const uint32_t INDICES_LENGTH = 6;
@@ -453,11 +453,11 @@ updateUniformBuffer(ovrVkContext *context, long long frameIndex, ovrBuffer *unif
 
     float time = ((float) frameIndex / 90.0f);
 
-    vec3 rot = {0.0f, 0.0f, 0.0f};
-    mat4 rotation = GLM_MAT4_IDENTITY_INIT;
-    glm_rotate(rotation, time * glm_rad(20.0f), rot);
-    glm_mat4_copy(rotation, ubo.model);
-    //glm_mat4_identity(ubo.model);
+    //vec3 rot = {0.0f, 0.0f, 0.0f};
+    //mat4 rotation = GLM_MAT4_IDENTITY_INIT;
+    //glm_rotate(rotation, time * glm_rad(20.0f), rot);
+    //glm_mat4_copy(rotation, ubo.model);
+    glm_mat4_identity(ubo.model);
     glm_mat4_identity(ubo.view);
     glm_mat4_identity(ubo.proj);
 
@@ -473,6 +473,7 @@ updateUniformBuffer(ovrVkContext *context, long long frameIndex, ovrBuffer *unif
 static ovrLayerProjection2 ovrRenderer_RenderFrame(
         ovrVkContext *context,
         ovrRenderer *renderer,
+        GstreamerInstance *gstreamerInstance,
         long long frameIndex,
         ovrScene *scene,
         const ovrTracking2 *tracking) {
@@ -482,6 +483,8 @@ static ovrLayerProjection2 ovrRenderer_RenderFrame(
                 ovrVkFramebuffer_GetRect(&renderer->Framebuffer[eye].Framebuffer);
 
         updateUniformBuffer(context, frameIndex, &renderer->UniformBuffer[eye]);
+        updateTextureImage(context, gstreamerInstance->dataHandle, TEXTURE_WIDTH, TEXTURE_HEIGHT,
+                           &renderer->textureImage);
 
         ovrVkCommandBuffer_BeginPrimary(&renderer->EyeCommandBuffer[eye]);
         ovrVkCommandBuffer_BeginFramebuffer(
@@ -926,6 +929,7 @@ void android_main(struct android_app *app) {
         const ovrLayerProjection2 worldLayer = ovrRenderer_RenderFrame(
                 &appState.Context,
                 &appState.Renderer,
+                appState.gstreamerInstance,
                 appState.FrameIndex,
                 &appState.Scene,
                 &tracking);

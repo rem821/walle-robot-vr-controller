@@ -1080,32 +1080,54 @@ void ovrBuffer_Uniform_Create(ovrVkContext *context, ovrBuffer *buffer) {
                      size, buffer);
 }
 
+void updateTextureImage(ovrVkContext *context, unsigned char *imageHandle, uint32_t texWidth,
+                        uint32_t texHeight,
+                        ovrImage *textureImage) {
+    VkDeviceSize imageSize = texWidth * texHeight * 4;
+
+    unsigned char *data;
+    VK(context->device->vkMapMemory(context->device->device,
+                                    textureImage->stagingBuffer.bufferMemory, 0,
+                                    imageSize, 0, (void **) &data));
+    memcpy(data, imageHandle, (size_t) imageSize);
+
+    VC(context->device->vkUnmapMemory(context->device->device,
+                                      textureImage->stagingBuffer.bufferMemory));
+
+    //transitionImageLayout(context, &textureImage->textureImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+    //                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    copyBufferToImage(context, &textureImage->stagingBuffer.buffer, &textureImage->textureImage,
+                      texWidth,
+                      texHeight);
+
+    //transitionImageLayout(context, &textureImage->textureImage,
+    //                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+    //                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+}
+
 void createTextureImage(ovrVkContext *context, unsigned char *imageHandle, uint32_t texWidth,
                         uint32_t texHeight,
                         ovrImage *textureImage) {
     VkDeviceSize imageSize = texWidth * texHeight * 4;
-    //unsigned char *pixels = calloc(1, imageSize);
-    //memcpy(pixels, imageHandle, imageSize);
-    //memset(imageHandle, 128, imageSize);
 
     ALOGV("Pixels[0]: R:%hhu   G:%hhu   B:%hhu   A:%hhu", imageHandle[0], imageHandle[1],
           imageHandle[2], imageHandle[3]);
     ALOGV("Pixels[262144]: R:%hhu   G:%hhu   B:%hhu   A:%hhu", imageHandle[1048572],
           imageHandle[1048573], imageHandle[1048574], imageHandle[1048575]);
 
-    ovrBuffer *stagingBuffer = malloc(sizeof(ovrBuffer));
     ovrBuffer_Create(context, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                     imageSize, stagingBuffer);
+                     imageSize, &textureImage->stagingBuffer);
 
     unsigned char *data;
-    VK(context->device->vkMapMemory(context->device->device, stagingBuffer->bufferMemory, 0,
+    VK(context->device->vkMapMemory(context->device->device,
+                                    textureImage->stagingBuffer.bufferMemory, 0,
                                     imageSize, 0, (void **) &data));
     memcpy(data, imageHandle, (size_t) imageSize);
 
-    VC(context->device->vkUnmapMemory(context->device->device, stagingBuffer->bufferMemory));
-
-    //free(pixels);
+    VC(context->device->vkUnmapMemory(context->device->device,
+                                      textureImage->stagingBuffer.bufferMemory));
 
     ALOGV("Pixels[0]: R:%hhu   G:%hhu   B:%hhu   A:%hhu", data[0], data[1], data[2], data[3]);
     ALOGV("Pixels[262144]: R:%hhu   G:%hhu   B:%hhu   A:%hhu", data[1048572], data[1048573],
@@ -1117,17 +1139,19 @@ void createTextureImage(ovrVkContext *context, unsigned char *imageHandle, uint3
 
     transitionImageLayout(context, &textureImage->textureImage, VK_IMAGE_LAYOUT_UNDEFINED,
                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    copyBufferToImage(context, &stagingBuffer->buffer, &textureImage->textureImage, texWidth,
+    copyBufferToImage(context, &textureImage->stagingBuffer.buffer, &textureImage->textureImage,
+                      texWidth,
                       texHeight);
 
     transitionImageLayout(context, &textureImage->textureImage,
                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                          VK_IMAGE_LAYOUT_GENERAL);
 
-    VC(context->device->vkDestroyBuffer(context->device->device, stagingBuffer->buffer,
-                                        VK_ALLOCATOR));
-    VC(context->device->vkFreeMemory(context->device->device, stagingBuffer->bufferMemory,
-                                     VK_ALLOCATOR));
+    //VC(context->device->vkDestroyBuffer(context->device->device, textureImage->stagingBuffer.buffer,
+    //                                    VK_ALLOCATOR));
+    //VC(context->device->vkFreeMemory(context->device->device,
+    //                                 textureImage->stagingBuffer.bufferMemory,
+    //                                 VK_ALLOCATOR));
 }
 
 void createImage(ovrVkContext *context, uint32_t width, uint32_t height, VkFormat format,
@@ -1202,9 +1226,9 @@ void transitionImageLayout(ovrVkContext *context, VkImage *image,
         sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
         destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
     } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
-               newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+               newLayout == VK_IMAGE_LAYOUT_GENERAL) {
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
 
         sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
         destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
@@ -1288,10 +1312,10 @@ void createTextureSampler(ovrVkContext *context, ovrImage *image) {
     samplerInfo.flags = 0;
     samplerInfo.magFilter = VK_FILTER_LINEAR;
     samplerInfo.minFilter = VK_FILTER_LINEAR;
-    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
     samplerInfo.anisotropyEnable = VK_FALSE;
     samplerInfo.maxAnisotropy = 1.0f;
     //samplerInfo.maxAnisotropy = context->device->physicalDeviceProperties.properties.limits.maxSamplerAnisotropy;
