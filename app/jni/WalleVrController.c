@@ -15,6 +15,7 @@
 
 #include "Framework_Vulkan.h"
 #include "Framework_Gstreamer.h"
+#include "Framework_VrInput.h"
 
 #include "VrApi.h"
 #include "VrApi_Vulkan.h"
@@ -551,6 +552,8 @@ typedef struct {
     int RenderThreadTid;
     ovrRenderer Renderer;
     GstreamerInstance *gstreamerInstance;
+    ovrInputDevice *InputDevices;
+    int InputDeviceCount;
 } ovrApp;
 
 static void ovrApp_Clear(ovrApp *app) {
@@ -573,6 +576,8 @@ static void ovrApp_Clear(ovrApp *app) {
     ovrScene_Clear(&app->Scene);
     ovrRenderer_Clear(&app->Renderer);
     app->gstreamerInstance = g_new0(GstreamerInstance, 1);
+    app->InputDevices = NULL;
+    app->InputDeviceCount = 0;
 }
 
 static void ovrApp_HandleVrModeChanges(ovrApp *app) {
@@ -924,6 +929,8 @@ void android_main(struct android_app *app) {
                 vrapi_GetPredictedTracking2(appState.Ovr, predictedDisplayTime);
 
         appState.DisplayTime = predictedDisplayTime;
+
+        EnumerateInputDevices(appState.Ovr, appState.InputDevices, appState.InputDeviceCount);
 
         // Render eye images and setup ovrFrameParms using ovrTracking2.
         const ovrLayerProjection2 worldLayer = ovrRenderer_RenderFrame(

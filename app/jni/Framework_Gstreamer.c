@@ -73,8 +73,8 @@ app_function(GstreamerInstance *data) {
     g_main_context_push_thread_default(data->context);
 
     /* Build pipeline */
-    GstElement *pipeline = gst_parse_launch("rtspsrc location=rtsp://192.168.1.239:8556/right latency=150 drop-on-latency= ! application/x-rtp,encoding-name=H264 ! decodebin ! videoconvert ! video/x-raw,width=1920,height=1080,format=RGBA ! appsink emit-signals=true name=wallesink sync=false", &error);
-    //GstElement *pipeline = gst_parse_launch("videotestsrc pattern=ball ! video/x-raw,width=1920,height=1080,format=RGBA ! appsink emit-signals=true name=wallesink", &error);
+    //GstElement *pipeline = gst_parse_launch("rtspsrc location=rtsp://192.168.1.239:8556/right latency=150 drop-on-latency= ! application/x-rtp,encoding-name=H264 ! decodebin ! videoconvert ! video/x-raw,width=1920,height=1080,format=RGBA ! appsink emit-signals=true name=wallesink sync=false", &error);
+    GstElement *pipeline = gst_parse_launch("videotestsrc pattern=ball ! video/x-raw,width=1920,height=1080,format=RGBA ! appsink emit-signals=true name=wallesink", &error);
     data->pipeline = pipeline;
 
     if (error) {
