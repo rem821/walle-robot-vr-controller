@@ -12,6 +12,8 @@
 #include <android/asset_manager_jni.h>
 #include <limits.h>
 #include <cglm/cglm.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 
 #include "Framework_Vulkan.h"
 #include "Framework_Gstreamer.h"
@@ -22,6 +24,7 @@
 #include "VrApi_Helpers.h"
 #include "VrApi_SystemUtils.h"
 #include "VrApi_Input.h"
+#include "UDPSocket.h"
 
 #define DEBUG 1
 #define OVR_LOG_TAG "WalleVrController"
@@ -554,6 +557,7 @@ typedef struct {
     GstreamerInstance *gstreamerInstance;
     ovrInputDevice *InputDevices;
     int InputDeviceCount;
+    int udpSocket;
 } ovrApp;
 
 static void ovrApp_Clear(ovrApp *app) {
@@ -576,8 +580,9 @@ static void ovrApp_Clear(ovrApp *app) {
     ovrScene_Clear(&app->Scene);
     ovrRenderer_Clear(&app->Renderer);
     app->gstreamerInstance = g_new0(GstreamerInstance, 1);
-    app->InputDevices = NULL;
+    app->InputDevices = calloc(sizeof(ovrInputDevice), 1);
     app->InputDeviceCount = 0;
+    app->udpSocket = -1;
 }
 
 static void ovrApp_HandleVrModeChanges(ovrApp *app) {
@@ -909,6 +914,8 @@ void android_main(struct android_app *app) {
 
             // Create the scene.
             ovrScene_Create(aassetManager, &appState.Context, &appState.Scene, &appState.Renderer);
+
+            appState.udpSocket = createSocket();
         }
 
         //----------------------
@@ -930,7 +937,15 @@ void android_main(struct android_app *app) {
 
         appState.DisplayTime = predictedDisplayTime;
 
-        EnumerateInputDevices(appState.Ovr, appState.InputDevices, appState.InputDeviceCount);
+        ovrJoystickInput *joystickInput = calloc(sizeof(ovrJoystickInput), 1);
+        EnumerateInputDevices(appState.Ovr, appState.InputDevices, &appState.InputDeviceCount);
+        HandleInputFromInputDevices(appState.Ovr, appState.InputDevices,
+                                    &appState.InputDeviceCount, appState.DisplayTime,
+                                    joystickInput);
+
+        sendUDPPacket(appState.udpSocket, joystickInput->leftX, joystickInput->leftY, joystickInput->rightX, joystickInput->rightY);
+        ALOGV("New joystick input => LEFT: x:%f, y:%f, RIGHT: x:%f y:%f", joystickInput->leftX, joystickInput->leftY, joystickInput->rightX, joystickInput->rightY);
+
 
         // Render eye images and setup ovrFrameParms using ovrTracking2.
         const ovrLayerProjection2 worldLayer = ovrRenderer_RenderFrame(
@@ -954,6 +969,8 @@ void android_main(struct android_app *app) {
         // Hand over the eye images to the time warp.
         vrapi_SubmitFrame2(appState.Ovr, &frameDesc);
     }
+
+    closeSocket(appState.udpSocket);
 
     ovrRenderer_Destroy(&appState.Renderer, &appState.Context);
 

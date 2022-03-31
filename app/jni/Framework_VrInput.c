@@ -1,5 +1,6 @@
 #include "Framework_VrInput.h"
 #include <android/log.h>
+#include <assert.h>
 
 #define OVR_LOG_TAG "WalleVrController-VrInput"
 
@@ -47,7 +48,7 @@ IsDeviceTracked(const ovrDeviceID deviceID, ovrInputDevice *inputDevices, int in
     return FindInputDevice(deviceID, inputDevices, inputDeviceCount) >= 0;
 }
 
-void EnumerateInputDevices(ovrMobile *ovr, ovrInputDevice *inputDevices, int inputDeviceCount) {
+void EnumerateInputDevices(ovrMobile *ovr, ovrInputDevice *inputDevices, int *inputDeviceCount) {
     for (uint32_t deviceIndex = 0;; deviceIndex++) {
         ovrInputCapabilityHeader curCaps;
 
@@ -56,42 +57,42 @@ void EnumerateInputDevices(ovrMobile *ovr, ovrInputDevice *inputDevices, int inp
             break; // no more devices
         }
 
-        if (!IsDeviceTracked(curCaps.DeviceID, inputDevices, inputDeviceCount)) {
-            //ALOG("Input -      tracked");
-            OnDeviceConnected(ovr, curCaps);
+        if (!IsDeviceTracked(curCaps.DeviceID, inputDevices, *inputDeviceCount)) {
+            //ALOGV("%s device tracked, ID = %u", *inputDeviceCount == 0 ? "first" : "second",
+            //      curCaps.DeviceID);
+            OnDeviceConnected(ovr, &curCaps, inputDevices, inputDeviceCount);
         }
     }
 }
 
-void OnDeviceConnected(ovrMobile *ovr, ovrInputCapabilityHeader capsHeader) {
-    ovrInputDevice *device = malloc(sizeof(ovrInputDevice));
+void OnDeviceConnected(ovrMobile *ovr, ovrInputCapabilityHeader *capsHeader,
+                       ovrInputDevice *inputDevices, int *inputDeviceCount) {
+    ovrInputDevice *device = calloc(sizeof(ovrInputDevice), 1);
     ovrResult result = ovrError_NotInitialized;
 
     // Currently the app doesn't support any other controller type
-    if (capsHeader.Type == ovrControllerType_TrackedRemote) {
-        //ALOG("Controller connected, ID = %u", capsHeader.DeviceID);
+    if (capsHeader->Type == ovrControllerType_TrackedRemote) {
+        ALOGV("%s controller connected, ID = %u", *inputDeviceCount == 0 ? "first" : "second",
+              capsHeader->DeviceID);
 
         ovrInputTrackedRemoteCapabilities trackedCaps;
-        trackedCaps.Header = capsHeader;
+        trackedCaps.Header = *capsHeader;
         result = vrapi_GetInputDeviceCapabilities(ovr, &trackedCaps.Header);
 
         if (result == ovrSuccess) {
+            device->deviceId = trackedCaps.Header.DeviceID;
+            device->type = trackedCaps.Header.Type;
+            device->caps = *capsHeader;
             device->trackedCaps = trackedCaps;
             device->isLeftHand = trackedCaps.ControllerCapabilities & ovrControllerCaps_LeftHand;
         }
-        if (result != ovrSuccess) {
-            //ALOG("vrapi_GetInputDeviceCapabilities: Error %i", result);
-        }
     } else return;
 
-    if (result != ovrSuccess) {
-        //ALOG("vrapi_GetInputDeviceCapabilities: Error %i", result);
-    }
-    if (device != NULL) {
-        //ALOG("Added device '%s', id = %u", device->GetName(), capsHeader.DeviceID);
-        //InputDevices.push_back(device);
-    } else {
-        // ALOG("Device creation failed for id = %u", capsHeader.DeviceID);
+    if (device->deviceId > 0) {
+        inputDevices[*inputDeviceCount] = *device;
+        *inputDeviceCount += 1;
+        ALOGV("Added %s controller, id = %u => current count: %d",
+              device->isLeftHand ? "left" : "right", capsHeader->DeviceID, *inputDeviceCount);
     }
 }
 
@@ -99,4 +100,54 @@ void OnDeviceDisconnected(const ovrDeviceID deviceID, ovrInputDevice *inputDevic
                           int *inputDeviceCount) {
     //ALOG("Controller disconnected, ID = %i", deviceID);
     RemoveDevice(deviceID, inputDevices, inputDeviceCount);
+}
+
+void
+HandleInputFromInputDevices(ovrMobile *ovr, ovrInputDevice *inputDevices, int *inputDeviceCount,
+                            double predictedDisplayTime,
+                            ovrJoystickInput *joystickInput) {
+
+    for (int i = (int) *inputDeviceCount - 1; i >= 0; --i) {
+        ovrInputDevice *device = &inputDevices[i];
+        if (device == NULL) {
+            assert(false); // this should never happen!
+        }
+
+        ovrDeviceID deviceID = device->deviceId;
+        if (deviceID == ovrDeviceIdType_Invalid) {
+            assert(deviceID != ovrDeviceIdType_Invalid);
+        }
+
+        if (device->type == ovrControllerType_TrackedRemote) {
+            ovrTracking remoteTracking;
+            ovrResult res = vrapi_GetInputTrackingState(ovr, deviceID, predictedDisplayTime,
+                                                           &remoteTracking);
+
+            if (res != ovrSuccess) {
+                OnDeviceDisconnected(deviceID, inputDevices, inputDeviceCount);
+                continue;
+            }
+
+            ovrInputStateTrackedRemote remoteInputState;
+            remoteInputState.Header.ControllerType = device->type;
+
+            ovrResult result;
+            result = vrapi_GetCurrentInputState(ovr, deviceID, &remoteInputState.Header);
+
+            if (result != ovrSuccess) {
+                OnDeviceDisconnected(deviceID, inputDevices, inputDeviceCount);
+                continue;
+            }
+
+            device->tracking = remoteTracking;
+
+            if(device->isLeftHand) {
+                joystickInput->leftX = remoteInputState.Joystick.x;
+                joystickInput->leftY = remoteInputState.Joystick.y;
+            } else {
+                joystickInput->rightX = remoteInputState.Joystick.x;
+                joystickInput->rightY = remoteInputState.Joystick.y;
+            }
+        }
+    }
 }
