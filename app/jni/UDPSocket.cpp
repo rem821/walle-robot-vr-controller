@@ -4,8 +4,26 @@
 #include <sys/endian.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <android/log.h>
 
+#include "Framework_VrInput.h"
 #include "UDPSocket.h"
+
+#define DEBUG 1
+#define OVR_LOG_TAG "WalleVrController"
+
+#if !defined(ALOGE)
+#define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, OVR_LOG_TAG, __VA_ARGS__)
+#endif
+
+#if !defined(ALOGV)
+#if DEBUG
+#define ALOGV(...) __android_log_print(ANDROID_LOG_VERBOSE, OVR_LOG_TAG, __VA_ARGS__)
+#else
+#define ALOGV(...)
+#endif
+#endif
+
 
 template<typename ... Args>
 std::string string_format(const std::string &format, Args ... args) {
@@ -25,7 +43,8 @@ void closeSocket(int socket) {
     close(socket);
 }
 
-unsigned long sendUDPPacket(int socket, float leftX, float leftY, float rightX, float rightY) {
+unsigned long
+sendUDPPacket(int socket, ovrPoseInput *poseInput) {
     std::string hostname{"192.168.1.239"};
     uint16_t port = 5005;
 
@@ -35,8 +54,8 @@ unsigned long sendUDPPacket(int socket, float leftX, float leftY, float rightX, 
     destination.sin_addr.s_addr = inet_addr(hostname.c_str());
 
     // Motors
-    int left = (int) (leftY * 1000);
-    int right = (int) (rightY * 1000);
+    int left = (int) (poseInput->leftY * 1000);
+    int right = (int) (poseInput->rightY * 1000);
 
     int leftDir = 0;
     if (left >= 0) {
@@ -48,10 +67,32 @@ unsigned long sendUDPPacket(int socket, float leftX, float leftY, float rightX, 
     }
 
     //Servos
-    int s0 = (int)((1 + rightX) * 70);; // Middle connector
-    int s1 = (int)((1 + leftX) * 90); // Right connector (by the voltage input)
+    float vertical = poseInput->headsetVertical;
+    if (vertical < -M_PI_2) {
+        vertical = -M_PI_2;
+    }
 
-    std::string message = string_format("s0:%03d,s1:%03d,m0:%04d,%01d,m1:%04d,%01d\n", abs(s0), abs(s1), abs(left),
+    if (vertical > 0) {
+        vertical = 0;
+    }
+
+    float horizontal = poseInput->headsetHorizontal;
+    if (horizontal < -M_PI_2) {
+        horizontal = -M_PI_2;
+        vertical = 0;
+    }
+
+    if (horizontal > M_PI_2) {
+        horizontal = M_PI_2;
+        vertical = 0;
+    }
+
+    int s0 = (int) abs((((vertical / M_PI_2)) * 180.0f) - 0.0f); // Vertical axis
+    int s1 = (int) abs(((1.0f + (horizontal / M_PI_2)) * 90.0f)); // Horizontal axis
+
+    ALOGV("Head: H:%d, V:%d, Motors: L:%d, R:%d", s1, s0, left, right);
+    std::string message = string_format("s0:%03d,s1:%03d,m0:%04d,%01d,m1:%04d,%01d\n", abs(s0),
+                                        abs(s1), abs(left),
                                         leftDir, abs(right), rightDir);
 
     size_t n_bytes = sendto(socket, message.c_str(), message.length(), 0,

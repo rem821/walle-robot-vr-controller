@@ -9,6 +9,6 @@ EXTERNC int createSocket();
 
 EXTERNC void closeSocket(int socket);
 
-EXTERNC unsigned long sendUDPPacket(int socket, float leftX, float leftY, float rightX, float rightY);
+EXTERNC unsigned long sendUDPPacket(int socket, ovrPoseInput *poseInput);
 
 #undef EXTERNC

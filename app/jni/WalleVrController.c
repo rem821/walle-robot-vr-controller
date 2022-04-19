@@ -558,6 +558,7 @@ typedef struct {
     ovrInputDevice *InputDevices;
     int InputDeviceCount;
     int udpSocket;
+    ovrRigidBodyPosef defaultHeadPose;
 } ovrApp;
 
 static void ovrApp_Clear(ovrApp *app) {
@@ -583,6 +584,7 @@ static void ovrApp_Clear(ovrApp *app) {
     app->InputDevices = calloc(sizeof(ovrInputDevice), 1);
     app->InputDeviceCount = 0;
     app->udpSocket = -1;
+    memset(&app->defaultHeadPose, 0, sizeof(ovrRigidBodyPosef));
 }
 
 static void ovrApp_HandleVrModeChanges(ovrApp *app) {
@@ -903,11 +905,22 @@ void android_main(struct android_app *app) {
             gstreamer_play(appState.gstreamerInstance);
 
             // Wait till the gstreamer initializes
-            while (appState.gstreamerInstance->memorySize != TEXTURE_WIDTH * TEXTURE_HEIGHT * 4) {
+            uint16_t retryCount = 0;
+            while (appState.gstreamerInstance->memorySize != TEXTURE_WIDTH * TEXTURE_HEIGHT * 4 &&
+                   retryCount < 20000) {
                 ALOGV("Waiting on the GStreamer to initialize");
+                retryCount++;
             }
 
-            ALOGV("GStreamer received first frame!");
+            if (retryCount == 20000) {
+                appState.gstreamerInstance->memorySize = TEXTURE_WIDTH * TEXTURE_HEIGHT * 4;
+                appState.gstreamerInstance->dataHandle = calloc(TEXTURE_WIDTH * TEXTURE_HEIGHT * 4,
+                                                                1);
+                ALOGV("GStreamer timed out!");
+            } else {
+                ALOGV("GStreamer received first frame!");
+            }
+
 
             ovrRenderer_Create(&appState.Renderer, &appState.Context, &appState.Java,
                                appState.gstreamerInstance);
@@ -937,14 +950,23 @@ void android_main(struct android_app *app) {
 
         appState.DisplayTime = predictedDisplayTime;
 
-        ovrJoystickInput *joystickInput = calloc(sizeof(ovrJoystickInput), 1);
+        ovrPoseInput *poseInput = calloc(sizeof(ovrPoseInput), 1);
         EnumerateInputDevices(appState.Ovr, appState.InputDevices, &appState.InputDeviceCount);
         HandleInputFromInputDevices(appState.Ovr, appState.InputDevices,
                                     &appState.InputDeviceCount, appState.DisplayTime,
-                                    joystickInput);
+                                    poseInput);
 
-        sendUDPPacket(appState.udpSocket, joystickInput->leftX, joystickInput->leftY, joystickInput->rightX, joystickInput->rightY);
-        ALOGV("New joystick input => LEFT: x:%f, y:%f, RIGHT: x:%f y:%f", joystickInput->leftX, joystickInput->leftY, joystickInput->rightX, joystickInput->rightY);
+        if (appState.defaultHeadPose.PredictionInSeconds == 0 || poseInput->a) {
+            appState.defaultHeadPose = tracking.HeadPose;
+        }
+
+        GetRelativeHeadPose(appState.defaultHeadPose, tracking.HeadPose, poseInput);
+
+        sendUDPPacket(appState.udpSocket, poseInput);
+        //ALOGV("New controller input => LEFT: x:%f, y:%f, RIGHT: x:%f y:%f, A:%d,B:%d,X:%d,Y:%d",
+        //      poseInput->leftX, poseInput->leftY, poseInput->rightX,
+        //      poseInput->rightY, poseInput->a, poseInput->b, poseInput->x,
+        //      poseInput->y);
 
 
         // Render eye images and setup ovrFrameParms using ovrTracking2.

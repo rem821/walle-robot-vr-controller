@@ -765,7 +765,7 @@ bool ovrVkRenderPass_Create(
     attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; //TODO: VK_IMAGE_LAYOUT_PRESENT_SRC_KHR ??? https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Render_passes
+    attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
     VkAttachmentReference colorAttachmentReference;
     colorAttachmentReference.attachment = 0;

@@ -2,6 +2,7 @@
 #include "VrApi_Helpers.h"
 #include "VrApi_SystemUtils.h"
 #include "VrApi_Input.h"
+#include <cglm/cglm.h>
 
 #ifndef WALLEVRCONTROLLER2_FRAMEWORK_VRINPUT_H
 #define WALLEVRCONTROLLER2_FRAMEWORK_VRINPUT_H
@@ -17,7 +18,9 @@ typedef struct {
 
 typedef struct {
     float leftX, leftY, rightX, rightY;
-} ovrJoystickInput;
+    bool a,b,x,y;
+    float headsetHorizontal, headsetVertical;
+} ovrPoseInput;
 
 int
 FindInputDevice(const ovrDeviceID deviceID, ovrInputDevice *inputDevices, int inputDeviceCount);
@@ -39,6 +42,8 @@ void OnDeviceDisconnected(const ovrDeviceID deviceID, ovrInputDevice *inputDevic
 
 void HandleInputFromInputDevices(ovrMobile *ovr, ovrInputDevice *inputDevices, int *inputDeviceCount,
                                  double predictedDisplayTime,
-                                 ovrJoystickInput *joystickInput);
+                                 ovrPoseInput *joystickInput);
+
+void GetRelativeHeadPose(ovrRigidBodyPosef defaultHeadPose, ovrRigidBodyPosef currentHeadPose, ovrPoseInput *poseInput);
 
 #endif //WALLEVRCONTROLLER2_FRAMEWORK_VRINPUT_H

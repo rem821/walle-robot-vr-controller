@@ -105,7 +105,7 @@ void OnDeviceDisconnected(const ovrDeviceID deviceID, ovrInputDevice *inputDevic
 void
 HandleInputFromInputDevices(ovrMobile *ovr, ovrInputDevice *inputDevices, int *inputDeviceCount,
                             double predictedDisplayTime,
-                            ovrJoystickInput *joystickInput) {
+                            ovrPoseInput *controllerInput) {
 
     for (int i = (int) *inputDeviceCount - 1; i >= 0; --i) {
         ovrInputDevice *device = &inputDevices[i];
@@ -142,12 +142,42 @@ HandleInputFromInputDevices(ovrMobile *ovr, ovrInputDevice *inputDevices, int *i
             device->tracking = remoteTracking;
 
             if(device->isLeftHand) {
-                joystickInput->leftX = remoteInputState.Joystick.x;
-                joystickInput->leftY = remoteInputState.Joystick.y;
+                controllerInput->leftX = remoteInputState.Joystick.x;
+                controllerInput->leftY = remoteInputState.Joystick.y;
+                controllerInput->x = remoteInputState.Buttons & ovrButton_X;
+                controllerInput->y = remoteInputState.Buttons & ovrButton_Y;
             } else {
-                joystickInput->rightX = remoteInputState.Joystick.x;
-                joystickInput->rightY = remoteInputState.Joystick.y;
+                controllerInput->rightX = remoteInputState.Joystick.x;
+                controllerInput->rightY = remoteInputState.Joystick.y;
+                controllerInput->a = remoteInputState.Buttons & ovrButton_A;
+                controllerInput->b = remoteInputState.Buttons & ovrButton_B;
             }
         }
     }
+}
+
+void GetRelativeHeadPose(ovrRigidBodyPosef defaultHeadPose, ovrRigidBodyPosef currentHeadPose, ovrPoseInput *poseInput) {
+    versor initial = {defaultHeadPose.Pose.Orientation.x,
+                      defaultHeadPose.Pose.Orientation.y,
+                      defaultHeadPose.Pose.Orientation.z,
+                      defaultHeadPose.Pose.Orientation.w};
+    versor inv;
+    glm_quat_conjugate(initial, inv);
+
+    versor current = {currentHeadPose.Pose.Orientation.x,
+                      currentHeadPose.Pose.Orientation.y,
+                      currentHeadPose.Pose.Orientation.z,
+                      currentHeadPose.Pose.Orientation.w};
+
+    versor quat_dest;
+    glm_quat_mul(current, inv, quat_dest);
+
+    mat4 mat_dest;
+    glm_quat_mat4(quat_dest, mat_dest);
+
+    vec3 dest;
+    glm_euler_angles(mat_dest, dest);
+
+    poseInput->headsetHorizontal = dest[1];
+    poseInput->headsetVertical = dest[0];
 }
